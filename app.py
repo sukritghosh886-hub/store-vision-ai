@@ -24,13 +24,68 @@ st.markdown(
         margin-bottom: 30px;
     }
 
-    .feature-card {
-        padding: 22px;
-        border-radius: 14px;
-        border: 1px solid #ddd;
-        background: white;
-        margin-bottom: 15px;
+    # ---------- Styling ----------
+st.markdown(
+    """
+    <style>
+
+    .main-title {
+        font-size: 42px;
+        font-weight: 800;
+        margin-bottom: 5px;
+        color: #111827 !important;
     }
+
+    .subtitle {
+        font-size: 18px;
+        color: #6b7280 !important;
+        margin-bottom: 30px;
+    }
+
+    /* Feature cards */
+    .feature-card {
+        padding: 24px;
+        border-radius: 16px;
+        border: 1px solid #d1d5db;
+        background-color: #ffffff !important;
+        margin-bottom: 15px;
+        min-height: 150px;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+    }
+
+    /* Feature card headings */
+    .feature-card h3 {
+        color: #111827 !important;
+        font-size: 22px !important;
+        font-weight: 700 !important;
+        opacity: 1 !important;
+        margin-bottom: 10px;
+    }
+
+    /* Feature card descriptions */
+    .feature-card p {
+        color: #4b5563 !important;
+        font-size: 16px !important;
+        line-height: 1.5 !important;
+        opacity: 1 !important;
+    }
+
+    /* Make sure everything inside cards remains visible */
+    .feature-card * {
+        opacity: 1 !important;
+    }
+
+    .metric-card {
+        padding: 18px;
+        border-radius: 12px;
+        border: 1px solid #ddd;
+        text-align: center;
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
     .metric-card {
         padding: 18px;
