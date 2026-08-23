@@ -10,7 +10,7 @@ st.set_page_config(
 
 # ---------- Styling ----------
 st.markdown(
-    """
+   
     <style>
     .main-title {
         font-size: 42px;
@@ -26,7 +26,7 @@ st.markdown(
 
     # ---------- Styling ----------
 st.markdown(
-    """
+    
     <style>
 
     .main-title {
@@ -83,7 +83,7 @@ st.markdown(
     }
 
     </style>
-    """,
+    ,
     unsafe_allow_html=True,
 )
 
