@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, Optional, Tuple
+from typing import Dict, List, Tuple
 
 from models.person_tracker import PersonTrack
 
@@ -16,17 +16,18 @@ class CrossingEvent:
 
 class EntryExitLineCounter:
     """
-    Detects when a tracked person crosses a virtual entrance line.
+    Detects multiple people crossing a virtual entrance/exit line.
 
-    The line is represented by two points.
+    The counter keeps the previous side of the line for every
+    tracked person and generates an event whenever that person
+    changes sides.
 
-    direction values:
-        "entry"
-        "exit"
+    Direction:
+        negative -> positive = entry
+        positive -> negative = exit
 
-    The algorithm uses the person's center point and compares
-    which side of the line the person was on before and after
-    the current frame.
+    If your camera is mounted in the opposite orientation,
+    use reverse_direction=True.
     """
 
     def __init__(
@@ -34,10 +35,12 @@ class EntryExitLineCounter:
         line_start: Point,
         line_end: Point,
         cooldown_frames: int = 20,
+        reverse_direction: bool = False,
     ):
         self.line_start = line_start
         self.line_end = line_end
-        self.cooldown_frames = cooldown_frames
+        self.cooldown_frames = max(0, cooldown_frames)
+        self.reverse_direction = reverse_direction
 
         self.previous_side: Dict[int, int] = {}
         self.cooldown: Dict[int, int] = {}
@@ -48,7 +51,6 @@ class EntryExitLineCounter:
         line_start: Point,
         line_end: Point,
     ) -> int:
-
         px, py = point
         x1, y1 = line_start
         x2, y2 = line_end
@@ -70,17 +72,44 @@ class EntryExitLineCounter:
         self.previous_side.clear()
         self.cooldown.clear()
 
+    def remove_track(self, track_id: int) -> None:
+        """
+        Remove tracking state for a person who has disappeared.
+        """
+        self.previous_side.pop(track_id, None)
+        self.cooldown.pop(track_id, None)
+
     def update(
         self,
         tracks: Dict[int, PersonTrack],
-    ) -> Optional[CrossingEvent]:
+    ) -> List[CrossingEvent]:
+        """
+        Process all tracks in the current frame.
 
-        for track_id in list(self.cooldown):
+        Returns every crossing detected in this frame.
+        """
+        events: List[CrossingEvent] = []
+
+        # Decrease cooldown counters.
+        for track_id in list(self.cooldown.keys()):
             self.cooldown[track_id] -= 1
 
             if self.cooldown[track_id] <= 0:
                 del self.cooldown[track_id]
 
+        active_ids = set(tracks.keys())
+
+        # Remove stale tracking state.
+        stale_ids = (
+            set(self.previous_side.keys())
+            - active_ids
+        )
+
+        for track_id in stale_ids:
+            self.remove_track(track_id)
+
+        # Process EVERY person instead of returning after
+        # the first crossing.
         for track_id, track in tracks.items():
 
             point = track.center
@@ -91,50 +120,59 @@ class EntryExitLineCounter:
                 self.line_end,
             )
 
+            # Ignore points exactly on the line.
             if current_side == 0:
                 continue
 
-            previous = self.previous_side.get(
+            previous_side = self.previous_side.get(
                 track_id
             )
 
             self.previous_side[track_id] = current_side
 
-            if previous is None:
+            # First observation of this person.
+            if previous_side is None:
                 continue
 
-            if previous == current_side:
+            # Person did not cross the line.
+            if previous_side == current_side:
                 continue
 
+            # Ignore repeated crossing during cooldown.
             if track_id in self.cooldown:
                 continue
 
             direction = self._get_direction(
-                previous,
+                previous_side,
                 current_side,
             )
+
+            if self.reverse_direction:
+                direction = (
+                    "exit"
+                    if direction == "entry"
+                    else "entry"
+                )
 
             self.cooldown[track_id] = (
                 self.cooldown_frames
             )
 
-            return CrossingEvent(
-                track_id=track_id,
-                direction=direction,
-                point=point,
+            events.append(
+                CrossingEvent(
+                    track_id=track_id,
+                    direction=direction,
+                    point=point,
+                )
             )
 
-        return None
+        return events
 
     @staticmethod
     def _get_direction(
         previous_side: int,
         current_side: int,
     ) -> str:
-
-        # Crossing from negative to positive is treated
-        # as entry. Reverse it if your camera orientation
-        # requires the opposite interpretation.
 
         if previous_side < current_side:
             return "entry"
