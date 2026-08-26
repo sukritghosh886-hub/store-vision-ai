@@ -6,7 +6,7 @@ matplotlib
 opencv-python-headless
 supabase
 python-dotenv
-
+opencv-python-headless
 # Computer vision / person detection
 ultralytics
 lap>=0.5.12
