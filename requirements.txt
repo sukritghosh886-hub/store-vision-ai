@@ -9,3 +9,4 @@ python-dotenv
 
 # Computer vision / person detection
 ultralytics
+lap>=0.5.12
