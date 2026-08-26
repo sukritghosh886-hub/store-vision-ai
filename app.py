@@ -1,207 +1,218 @@
 import streamlit as st
+import pandas as pd
 
-# ============================================================
-# Store Vision AI
-# ============================================================
+import store_events
+
 
 st.set_page_config(
     page_title="Store Vision AI",
     page_icon="👁️",
     layout="wide",
-    initial_sidebar_state="expanded",
 )
 
-# ============================================================
-# CUSTOM CSS
-# ============================================================
+
+st.title("👁️ Store Vision AI")
+
+st.caption(
+    "AI-powered retail visitor monitoring, "
+    "item observation, billing comparison, "
+    "and security alerts."
+)
+
+
+with st.sidebar:
+
+    st.header("Store")
+
+    store_name = st.text_input(
+        "Store name",
+        "Demo Store",
+    )
+
+
+try:
+
+    store_id = (
+        store_events
+        .get_or_create_store(
+            store_name
+        )
+    )
+
+except Exception as error:
+
+    st.error(
+        "Supabase is not connected."
+    )
+
+    st.info(
+        "Configure SUPABASE_URL and "
+        "SUPABASE_PUBLISHABLE_KEY "
+        "in Streamlit Secrets."
+    )
+
+    st.exception(error)
+
+    st.stop()
+
+
+visits = (
+    store_events
+    .get_visit_history(
+        store_id,
+        limit=100,
+    )
+)
+
+alerts = (
+    store_events
+    .get_all_alerts(
+        store_id,
+        limit=100,
+    )
+)
+
+open_alerts = [
+    alert
+    for alert in alerts
+    if alert.get("status") == "open"
+]
+
+active_visits = [
+    visit
+    for visit in visits
+    if visit.get("status") == "in_store"
+]
+
+flagged_visits = [
+    visit
+    for visit in visits
+    if visit.get("status") == "exited_flagged"
+]
+
+
+col1, col2, col3, col4 = st.columns(4)
+
+
+with col1:
+    st.metric(
+        "Total Visits",
+        len(visits),
+    )
+
+
+with col2:
+    st.metric(
+        "Currently Inside",
+        len(active_visits),
+    )
+
+
+with col3:
+    st.metric(
+        "Flagged Visits",
+        len(flagged_visits),
+    )
+
+
+with col4:
+    st.metric(
+        "Open Alerts",
+        len(open_alerts),
+    )
+
+
+st.divider()
+
+
+st.subheader(
+    "Recent Visits"
+)
+
+
+if visits:
+
+    dataframe = pd.DataFrame(
+        visits
+    )
+
+    columns = [
+        "track_id",
+        "camera_id",
+        "entered_at",
+        "exited_at",
+        "status",
+        "unpaid_item_count",
+    ]
+
+    available = [
+        column
+        for column in columns
+        if column in dataframe.columns
+    ]
+
+    st.dataframe(
+        dataframe[available],
+        use_container_width=True,
+        hide_index=True,
+    )
+
+else:
+
+    st.info(
+        "No visits recorded yet. "
+        "Open Live Monitor and process a video."
+    )
+
+
+st.divider()
+
+
+st.subheader(
+    "🚨 Open Security Alerts"
+)
+
+
+if open_alerts:
+
+    for alert in open_alerts:
+
+        st.warning(
+            f"Visit {alert['visit_id'][:8]} — "
+            f"{alert['unpaid_item_count']} "
+            f"unpaid item(s)"
+        )
+
+    st.page_link(
+        "pages/3_Theft_Alerts.py",
+        label="Open Alert Review",
+        icon="🚨",
+    )
+
+else:
+
+    st.success(
+        "No open security alerts."
+    )
+
+
+st.divider()
+
+
+st.subheader(
+    "How to test"
+)
 
 st.markdown(
     """
-    <style>
-
-    /* Main title */
-    .main-title {
-        font-size: 42px;
-        font-weight: 800;
-        margin-bottom: 5px;
-        color: #111827 !important;
-    }
-
-    /* Subtitle */
-    .subtitle {
-        font-size: 18px;
-        color: #4b5563 !important;
-        margin-bottom: 30px;
-    }
-
-    /* Feature cards */
-    .feature-card {
-        padding: 24px;
-        border-radius: 16px;
-        border: 1px solid #d1d5db;
-        background-color: #ffffff !important;
-        margin-bottom: 15px;
-        min-height: 150px;
-        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
-    }
-
-    /* Feature card heading */
-    .feature-card h3 {
-        color: #111827 !important;
-        font-size: 21px !important;
-        font-weight: 700 !important;
-        opacity: 1 !important;
-        margin-top: 0;
-        margin-bottom: 10px;
-    }
-
-    /* Feature card description */
-    .feature-card p {
-        color: #4b5563 !important;
-        font-size: 15px !important;
-        line-height: 1.5 !important;
-        opacity: 1 !important;
-        margin-bottom: 0;
-    }
-
-    /* Keep all card content visible */
-    .feature-card * {
-        opacity: 1 !important;
-    }
-
-    /* Metric cards */
-    .metric-card {
-        padding: 18px;
-        border-radius: 12px;
-        border: 1px solid #d1d5db;
-        background-color: #ffffff !important;
-        text-align: center;
-    }
-
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# ============================================================
-# SIDEBAR
-# ============================================================
-
-st.sidebar.title("👁️ Store Vision AI")
-st.sidebar.caption("Retail Computer Vision Platform")
-
-st.sidebar.markdown("---")
-
-st.sidebar.markdown("### Navigation")
-
-st.sidebar.info(
-    "Use the dashboard to analyse shelf images, "
-    "view product information and explore analytics."
-)
-
-st.sidebar.markdown("---")
-
-st.sidebar.markdown("### Version")
-
-st.sidebar.success("v1.0 MVP")
-
-# ============================================================
-# MAIN HEADER
-# ============================================================
-
-st.markdown(
-    '<div class="main-title">👁️ Store Vision AI</div>',
-    unsafe_allow_html=True,
-)
-
-st.markdown(
-    '<div class="subtitle">'
-    "AI-powered retail shelf monitoring and visual inventory analysis"
-    "</div>",
-    unsafe_allow_html=True,
-)
-
-st.info(
-    "Store Vision AI analyses retail shelf images and converts "
-    "visual information into useful inventory and shelf-performance insights."
-)
-
-# ============================================================
-# FEATURES
-# ============================================================
-
-st.markdown("## 🚀 What this MVP can do")
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.markdown(
-        """
-        <div class="feature-card">
-            <h3>📷 Image Analysis</h3>
-            <p>
-                Upload a shelf image and analyse its visual structure.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-with col2:
-    st.markdown(
-        """
-        <div class="feature-card">
-            <h3>📦 Product Analysis</h3>
-            <p>
-                Estimate visible products and identify shelf occupancy.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-with col3:
-    st.markdown(
-        """
-        <div class="feature-card">
-            <h3>📊 Analytics</h3>
-            <p>
-                Turn visual analysis into useful inventory-style metrics.
-            </p>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-# ============================================================
-# ROADMAP
-# ============================================================
-
-st.markdown("---")
-
-st.markdown("## 🧠 Development Roadmap")
-
-roadmap = [
-    ("✅", "Phase 1", "Streamlit dashboard and image analysis"),
-    ("🔄", "Phase 2", "YOLO-based product detection"),
-    ("⏳", "Phase 3", "Real-time webcam/video analysis"),
-    ("⏳", "Phase 4", "Product recognition and SKU detection"),
-    ("⏳", "Phase 5", "Stock-out and empty-shelf alerts"),
-    ("⏳", "Phase 6", "AI retail assistant"),
-]
-
-for icon, phase, description in roadmap:
-    st.markdown(
-        f"**{icon} {phase}** — {description}"
-    )
-
-# ============================================================
-# FOOTER
-# ============================================================
-
-st.markdown("---")
-
-st.caption(
-    "Store Vision AI | Portfolio Project | "
-    "Built with Python + Streamlit + Computer Vision"
+1. Open **🎥 Live Monitor**.
+2. Upload a short store video.
+3. Let Store Vision AI detect and track people.
+4. Items detected around the shelf zone are recorded.
+5. When a tracked person reaches the exit zone,
+   the system compares observed items against billing.
+6. If something remains unpaid, an **alert is created**.
+7. Open **🚨 Security Alerts**.
+8. A human staff member confirms or dismisses the alert.
+"""
 )
