@@ -1,218 +1,92 @@
 import streamlit as st
-import pandas as pd
+from supabase import create_client
 
-import store_events
+st.set_page_config(page_title="Supabase Diagnostic")
 
+st.title("🔧 Store Vision AI — Supabase Diagnostic")
 
-st.set_page_config(
-    page_title="Store Vision AI",
-    page_icon="👁️",
-    layout="wide",
-)
+# ---------------------------------------------------------
+# Read Streamlit Secrets
+# ---------------------------------------------------------
 
+url = st.secrets.get("SUPABASE_URL")
+key = st.secrets.get("SUPABASE_PUBLISHABLE_KEY")
 
-st.title("👁️ Store Vision AI")
-
-st.caption(
-    "AI-powered retail visitor monitoring, "
-    "item observation, billing comparison, "
-    "and security alerts."
-)
-
-
-with st.sidebar:
-
-    st.header("Store")
-
-    store_name = st.text_input(
-        "Store name",
-        "Demo Store",
-    )
-
-
-try:
-
-    store_id = (
-        store_events
-        .get_or_create_store(
-            store_name
-        )
-    )
-
-except Exception as error:
-
-    st.error(
-        "Supabase is not connected."
-    )
-
-    st.info(
-        "Configure SUPABASE_URL and "
-        "SUPABASE_PUBLISHABLE_KEY "
-        "in Streamlit Secrets."
-    )
-
-    st.exception(error)
-
+if not url:
+    st.error("SUPABASE_URL is missing from Streamlit Secrets.")
     st.stop()
 
+if not key:
+    st.error("SUPABASE_PUBLISHABLE_KEY is missing from Streamlit Secrets.")
+    st.stop()
 
-visits = (
-    store_events
-    .get_visit_history(
-        store_id,
-        limit=100,
-    )
-)
+st.success("Supabase Secrets are present.")
 
-alerts = (
-    store_events
-    .get_all_alerts(
-        store_id,
-        limit=100,
-    )
-)
+# Show only the project URL, NEVER the key
+st.write("Supabase URL:")
+st.code(url)
 
-open_alerts = [
-    alert
-    for alert in alerts
-    if alert.get("status") == "open"
-]
+# ---------------------------------------------------------
+# Connect
+# ---------------------------------------------------------
 
-active_visits = [
-    visit
-    for visit in visits
-    if visit.get("status") == "in_store"
-]
+try:
+    supabase = create_client(url, key)
+    st.success("Supabase client created successfully.")
+except Exception as e:
+    st.error("Could not create Supabase client.")
+    st.exception(e)
+    st.stop()
 
-flagged_visits = [
-    visit
-    for visit in visits
-    if visit.get("status") == "exited_flagged"
-]
+# ---------------------------------------------------------
+# READ TEST
+# ---------------------------------------------------------
 
+st.subheader("1. Database Read Test")
 
-col1, col2, col3, col4 = st.columns(4)
-
-
-with col1:
-    st.metric(
-        "Total Visits",
-        len(visits),
+try:
+    result = (
+        supabase
+        .table("stores")
+        .select("id,owner_id,name")
+        .limit(5)
+        .execute()
     )
 
+    st.success("Successfully read the stores table.")
 
-with col2:
-    st.metric(
-        "Currently Inside",
-        len(active_visits),
-    )
+    if result.data:
+        st.dataframe(result.data, use_container_width=True)
+    else:
+        st.info("stores table is empty.")
 
-
-with col3:
-    st.metric(
-        "Flagged Visits",
-        len(flagged_visits),
-    )
+except Exception as e:
+    st.error("READ FAILED")
+    st.exception(e)
 
 
-with col4:
-    st.metric(
-        "Open Alerts",
-        len(open_alerts),
-    )
+# ---------------------------------------------------------
+# INSERT TEST
+# ---------------------------------------------------------
 
+st.subheader("2. Database Insert Test")
 
-st.divider()
+if st.button("Test Store Insert"):
 
-
-st.subheader(
-    "Recent Visits"
-)
-
-
-if visits:
-
-    dataframe = pd.DataFrame(
-        visits
-    )
-
-    columns = [
-        "track_id",
-        "camera_id",
-        "entered_at",
-        "exited_at",
-        "status",
-        "unpaid_item_count",
-    ]
-
-    available = [
-        column
-        for column in columns
-        if column in dataframe.columns
-    ]
-
-    st.dataframe(
-        dataframe[available],
-        use_container_width=True,
-        hide_index=True,
-    )
-
-else:
-
-    st.info(
-        "No visits recorded yet. "
-        "Open Live Monitor and process a video."
-    )
-
-
-st.divider()
-
-
-st.subheader(
-    "🚨 Open Security Alerts"
-)
-
-
-if open_alerts:
-
-    for alert in open_alerts:
-
-        st.warning(
-            f"Visit {alert['visit_id'][:8]} — "
-            f"{alert['unpaid_item_count']} "
-            f"unpaid item(s)"
+    try:
+        result = (
+            supabase
+            .table("stores")
+            .insert({
+                "name": "Streamlit Diagnostic Store",
+                "address": "Diagnostic Test"
+            })
+            .execute()
         )
 
-    st.page_link(
-        "pages/3_Theft_Alerts.py",
-        label="Open Alert Review",
-        icon="🚨",
-    )
+        st.success("INSERT WORKED!")
+        st.write(result.data)
 
-else:
-
-    st.success(
-        "No open security alerts."
-    )
-
-
-st.divider()
-
-
-st.subheader(
-    "How to test"
-)
-
-st.markdown(
-    """
-1. Open **🎥 Live Monitor**.
-2. Upload a short store video.
-3. Let Store Vision AI detect and track people.
-4. Items detected around the shelf zone are recorded.
-5. When a tracked person reaches the exit zone,
-   the system compares observed items against billing.
-6. If something remains unpaid, an **alert is created**.
-7. Open **🚨 Security Alerts**.
-8. A human staff member confirms or dismisses the alert.
-"""
-)
+    except Exception as e:
+        st.error("INSERT FAILED")
+        st.exception(e)
