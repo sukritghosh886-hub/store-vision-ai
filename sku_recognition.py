@@ -4,94 +4,177 @@ import cv2
 import numpy as np
 
 
-def image_embedding(image):
+def preprocess_image(image: np.ndarray) -> np.ndarray:
+    """
+    Convert an image into a normalized feature representation.
+    """
 
-    resized = cv2.resize(
-        image,
-        (64, 64),
+    if image is None:
+        raise ValueError("Image is None")
+
+    if len(image.shape) == 2:
+        gray = image
+    else:
+        gray = cv2.cvtColor(
+            image,
+            cv2.COLOR_BGR2GRAY,
+        )
+
+    gray = cv2.resize(
+        gray,
+        (128, 128),
+        interpolation=cv2.INTER_AREA,
     )
 
-    gray = cv2.cvtColor(
-        resized,
-        cv2.COLOR_BGR2GRAY,
+    # Histogram captures visual distribution.
+    histogram = cv2.calcHist(
+        [gray],
+        [0],
+        None,
+        [64],
+        [0, 256],
     )
 
-    vector = gray.astype(
+    histogram = cv2.normalize(
+        histogram,
+        histogram,
+    ).flatten()
+
+    # Edge information captures shape/packaging structure.
+    edges = cv2.Canny(
+        gray,
+        50,
+        150,
+    )
+
+    edges = cv2.resize(
+        edges,
+        (32, 32),
+    )
+
+    edges = edges.astype(
         np.float32
+    ) / 255.0
+
+    return np.concatenate(
+        [
+            histogram,
+            edges.flatten(),
+        ]
     )
-
-    vector /= 255.0
-
-    return vector.flatten()
 
 
 def compare_images(
-    query,
-    reference,
-):
+    query: np.ndarray,
+    reference: np.ndarray,
+) -> float:
 
-    a = image_embedding(query)
-
-    b = image_embedding(reference)
-
-    distance = np.linalg.norm(
-        a - b
+    query_features = preprocess_image(
+        query
     )
 
-    maximum = np.sqrt(
-        len(a)
+    reference_features = preprocess_image(
+        reference
     )
 
-    return max(
-        0.0,
-        1.0 - (
-            distance / maximum
-        ),
+    # Cosine similarity
+    denominator = (
+        np.linalg.norm(query_features)
+        * np.linalg.norm(reference_features)
+    )
+
+    if denominator == 0:
+        return 0.0
+
+    similarity = (
+        np.dot(
+            query_features,
+            reference_features,
+        )
+        / denominator
+    )
+
+    return float(
+        np.clip(
+            similarity,
+            0.0,
+            1.0,
+        )
     )
 
 
 def recognize_sku(
-    query_image,
-    references,
-    threshold=0.70,
+    query_image: np.ndarray,
+    references: list,
+    threshold: float = 0.70,
 ):
 
-    best = None
+    if not references:
+        return {
+            "matched": False,
+            "confidence": 0.0,
+            "message": "No SKU references available.",
+        }
 
+    best_reference = None
     best_score = 0.0
 
     for reference in references:
 
+        reference_image = reference.get(
+            "image"
+        )
+
+        if reference_image is None:
+            continue
+
         score = compare_images(
             query_image,
-            reference["image"],
+            reference_image,
         )
 
         if score > best_score:
-
             best_score = score
+            best_reference = reference
 
-            best = reference
+    if best_reference is None:
+        return {
+            "matched": False,
+            "confidence": 0.0,
+            "message": "No usable reference images.",
+        }
 
-    if best is None:
-        return None
-
-    if best_score < threshold:
-        return None
+    matched = (
+        best_score >= threshold
+    )
 
     return {
+        "matched": matched,
+        "confidence": round(
+            best_score,
+            4,
+        ),
         "product_id":
-            best["product_id"],
-
+            best_reference.get(
+                "product_id"
+            ),
         "sku":
-            best["sku"],
-
+            best_reference.get(
+                "sku"
+            ),
         "name":
-            best["name"],
-
-        "confidence":
-            round(
-                best_score,
-                3,
+            best_reference.get(
+                "name"
+            ),
+        "category":
+            best_reference.get(
+                "category"
+            ),
+        "message":
+            (
+                "SKU match found."
+                if matched
+                else
+                "No confident SKU match."
             ),
     }
