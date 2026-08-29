@@ -1,3 +1,6 @@
+
+
+
 streamlit
 pillow
 numpy
@@ -10,3 +13,6 @@ opencv-python-headless
 # Computer vision / person detection
 ultralytics
 lap>=0.5.12
+
+libgl1
+libglib2.0-0
