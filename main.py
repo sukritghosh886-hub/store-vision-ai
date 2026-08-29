@@ -5,29 +5,18 @@ from typing import Optional
 
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 import store_events
 from vision_pipeline import process_video
 
 
-# ============================================================
-# FASTAPI APPLICATION
-# ============================================================
-
 app = FastAPI(
     title="Store Vision AI",
-    description=(
-        "AI-powered store monitoring API using "
-        "YOLO, OpenCV, person tracking and Supabase."
-    ),
+    description="AI-powered store monitoring system",
     version="1.0.0",
 )
-
-
-# ============================================================
-# CORS
-# ============================================================
 
 app.add_middleware(
     CORSMiddleware,
@@ -38,61 +27,480 @@ app.add_middleware(
 )
 
 
-# ============================================================
-# REQUEST MODELS
-# ============================================================
+# ---------------------------------------------------------
+# DATA MODELS
+# ---------------------------------------------------------
 
-class StoreCreateRequest(BaseModel):
-    name: str = Field(..., min_length=1)
+class StoreRequest(BaseModel):
+    name: str
     address: Optional[str] = None
 
 
-class BillingEventRequest(BaseModel):
+class BillingRequest(BaseModel):
     visit_id: str
     item_label: Optional[str] = None
     quantity: int = Field(default=1, ge=1)
     source: str = "manual"
 
 
-class AlertReviewRequest(BaseModel):
+class ReviewRequest(BaseModel):
     status: str
     reviewed_by: str
     notes: Optional[str] = None
 
 
-# ============================================================
-# ROOT / HEALTH
-# ============================================================
+# ---------------------------------------------------------
+# BROWSER FRONTEND
+# ---------------------------------------------------------
 
-@app.get("/")
-def root():
-    return {
-        "app": "Store Vision AI",
-        "status": "running",
-        "version": "1.0.0",
-        "docs": "/docs",
+@app.get("/", response_class=HTMLResponse)
+def home():
+    return """
+<!DOCTYPE html>
+<html>
+<head>
+    <meta name="viewport"
+          content="width=device-width, initial-scale=1">
+
+    <title>Store Vision AI</title>
+
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            background: #f4f6f8;
+            color: #222;
+        }
+
+        header {
+            background: #111827;
+            color: white;
+            padding: 20px;
+        }
+
+        header h1 {
+            margin: 0;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: auto;
+            padding: 20px;
+        }
+
+        .card {
+            background: white;
+            padding: 20px;
+            margin-bottom: 20px;
+            border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+        }
+
+        input,
+        button {
+            width: 100%;
+            box-sizing: border-box;
+            padding: 12px;
+            margin-top: 8px;
+            margin-bottom: 12px;
+            border-radius: 8px;
+            border: 1px solid #ccc;
+        }
+
+        button {
+            background: #2563eb;
+            color: white;
+            border: none;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #1d4ed8;
+        }
+
+        #status {
+            white-space: pre-wrap;
+            background: #111827;
+            color: #d1fae5;
+            padding: 15px;
+            border-radius: 8px;
+            overflow-x: auto;
+        }
+
+        .danger {
+            color: #dc2626;
+            font-weight: bold;
+        }
+
+        .success {
+            color: #16a34a;
+            font-weight: bold;
+        }
+    </style>
+</head>
+
+<body>
+
+<header>
+    <h1>Store Vision AI</h1>
+    <p>AI Store Monitoring & Security</p>
+</header>
+
+<div class="container">
+
+    <div class="card">
+
+        <h2>🎥 Analyze Store Video</h2>
+
+        <label>Store ID</label>
+
+        <input
+            id="storeId"
+            type="text"
+            placeholder="Enter Supabase Store ID"
+        >
+
+        <label>Video</label>
+
+        <input
+            id="video"
+            type="file"
+            accept="video/*"
+        >
+
+        <button onclick="analyzeVideo()">
+            Analyze Video
+        </button>
+
+    </div>
+
+
+    <div class="card">
+
+        <h2>🚨 Store Alerts</h2>
+
+        <button onclick="loadAlerts()">
+            Load Open Alerts
+        </button>
+
+        <div id="alerts"></div>
+
+    </div>
+
+
+    <div class="card">
+
+        <h2>👥 Visit History</h2>
+
+        <button onclick="loadVisits()">
+            Load Visits
+        </button>
+
+        <div id="visits"></div>
+
+    </div>
+
+
+    <div class="card">
+
+        <h2>System Status</h2>
+
+        <button onclick="checkHealth()">
+            Check API
+        </button>
+
+        <div id="status">
+            Ready.
+        </div>
+
+    </div>
+
+</div>
+
+
+<script>
+
+async function analyzeVideo() {
+
+    const storeId =
+        document.getElementById("storeId").value;
+
+    const video =
+        document.getElementById("video").files[0];
+
+    if (!storeId) {
+        alert("Enter Store ID.");
+        return;
     }
 
+    if (!video) {
+        alert("Select a video.");
+        return;
+    }
+
+    const formData = new FormData();
+
+    formData.append("file", video);
+
+    document.getElementById("status").textContent =
+        "Uploading and processing video...";
+
+    try {
+
+        const response = await fetch(
+            `/analyze/video?store_id=${encodeURIComponent(storeId)}`,
+            {
+                method: "POST",
+                body: formData
+            }
+        );
+
+        const data = await response.json();
+
+        document.getElementById("status")
+            .textContent =
+            JSON.stringify(data, null, 2);
+
+        if (data.open_alerts) {
+            displayAlerts(data.open_alerts);
+        }
+
+    } catch (error) {
+
+        document.getElementById("status")
+            .textContent =
+            "Error: " + error;
+
+    }
+}
+
+
+async function loadAlerts() {
+
+    const storeId =
+        document.getElementById("storeId").value;
+
+    if (!storeId) {
+        alert("Enter Store ID.");
+        return;
+    }
+
+    try {
+
+        const response = await fetch(
+            `/stores/${storeId}/alerts/open`
+        );
+
+        const data = await response.json();
+
+        displayAlerts(data.alerts || []);
+
+    } catch (error) {
+
+        document.getElementById("alerts")
+            .textContent =
+            "Could not load alerts.";
+
+    }
+}
+
+
+function displayAlerts(alerts) {
+
+    const element =
+        document.getElementById("alerts");
+
+    if (!alerts.length) {
+
+        element.innerHTML =
+            '<p class="success">✓ No open alerts</p>';
+
+        return;
+    }
+
+    element.innerHTML = "";
+
+    alerts.forEach(alert => {
+
+        const div =
+            document.createElement("div");
+
+        div.className = "card";
+
+        div.innerHTML = `
+            <p class="danger">
+                🚨 Security Alert
+            </p>
+
+            <p>
+                Type:
+                ${alert.alert_type || "unknown"}
+            </p>
+
+            <p>
+                Unpaid items:
+                ${alert.unpaid_item_count || 0}
+            </p>
+
+            <p>
+                Status:
+                ${alert.status || "unknown"}
+            </p>
+
+            <button
+                onclick="reviewAlert('${alert.id}', 'confirmed')">
+                Confirm Alert
+            </button>
+
+            <button
+                onclick="reviewAlert('${alert.id}', 'dismissed')">
+                Dismiss Alert
+            </button>
+        `;
+
+        element.appendChild(div);
+    });
+}
+
+
+async function reviewAlert(id, status) {
+
+    const reviewer =
+        prompt("Enter reviewer name:");
+
+    if (!reviewer) return;
+
+    const response = await fetch(
+        `/alerts/${id}/review`,
+        {
+            method: "PATCH",
+
+            headers: {
+                "Content-Type":
+                    "application/json"
+            },
+
+            body: JSON.stringify({
+                status: status,
+                reviewed_by: reviewer
+            })
+        }
+    );
+
+    const data = await response.json();
+
+    alert(JSON.stringify(data));
+
+    loadAlerts();
+}
+
+
+async function loadVisits() {
+
+    const storeId =
+        document.getElementById("storeId").value;
+
+    if (!storeId) {
+        alert("Enter Store ID.");
+        return;
+    }
+
+    try {
+
+        const response = await fetch(
+            `/stores/${storeId}/visits`
+        );
+
+        const data = await response.json();
+
+        const element =
+            document.getElementById("visits");
+
+        if (!data.visits ||
+            data.visits.length === 0) {
+
+            element.innerHTML =
+                "<p>No visits found.</p>";
+
+            return;
+        }
+
+        element.innerHTML =
+            "<pre>" +
+            JSON.stringify(
+                data.visits,
+                null,
+                2
+            ) +
+            "</pre>";
+
+    } catch (error) {
+
+        document.getElementById("visits")
+            .textContent =
+            "Could not load visits.";
+
+    }
+}
+
+
+async function checkHealth() {
+
+    try {
+
+        const response =
+            await fetch("/health");
+
+        const data =
+            await response.json();
+
+        document.getElementById("status")
+            .textContent =
+            JSON.stringify(
+                data,
+                null,
+                2
+            );
+
+    } catch (error) {
+
+        document.getElementById("status")
+            .textContent =
+            "API is unreachable.";
+
+    }
+}
+
+</script>
+
+</body>
+</html>
+"""
+
+
+# ---------------------------------------------------------
+# HEALTH
+# ---------------------------------------------------------
 
 @app.get("/health")
 def health():
+
     return {
         "status": "healthy",
         "service": "store-vision-ai",
     }
 
 
-# ============================================================
-# STORE ENDPOINTS
-# ============================================================
+# ---------------------------------------------------------
+# CREATE STORE
+# ---------------------------------------------------------
 
 @app.post("/stores")
-def create_store(request: StoreCreateRequest):
-    """
-    Create a store if it doesn't already exist.
-    """
+def create_store(request: StoreRequest):
 
     try:
+
         store_id = store_events.get_or_create_store(
             name=request.name,
             address=request.address,
@@ -101,20 +509,19 @@ def create_store(request: StoreCreateRequest):
         return {
             "success": True,
             "store_id": store_id,
-            "name": request.name,
-            "address": request.address,
         }
 
     except Exception as exc:
+
         raise HTTPException(
             status_code=500,
-            detail=f"Could not create store: {str(exc)}",
+            detail=str(exc),
         )
 
 
-# ============================================================
+# ---------------------------------------------------------
 # VIDEO ANALYSIS
-# ============================================================
+# ---------------------------------------------------------
 
 @app.post("/analyze/video")
 async def analyze_video(
@@ -125,36 +532,7 @@ async def analyze_video(
     confidence: float = 0.40,
     frame_stride: int = 2,
 ):
-    """
-    Upload a store video and run the existing
-    Store Vision AI computer-vision pipeline.
 
-    The existing vision_pipeline.py performs:
-
-        Video
-          ↓
-        YOLO detection
-          ↓
-        Person tracking
-          ↓
-        Visit creation
-          ↓
-        Item association
-          ↓
-        Exit detection
-          ↓
-        Billing comparison
-          ↓
-        Alert creation
-    """
-
-    if not file.filename:
-        raise HTTPException(
-            status_code=400,
-            detail="No video file was provided.",
-        )
-
-    # Basic video extension validation.
     allowed_extensions = {
         ".mp4",
         ".avi",
@@ -164,68 +542,35 @@ async def analyze_video(
     }
 
     extension = os.path.splitext(
-        file.filename
+        file.filename or ""
     )[1].lower()
 
     if extension not in allowed_extensions:
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                "Unsupported video format. "
-                "Use MP4, AVI, MOV, MKV or WEBM."
-            ),
-        )
 
-    if not 0 < confidence <= 1:
         raise HTTPException(
             status_code=400,
-            detail="confidence must be between 0 and 1.",
-        )
-
-    if not 0 < shelf_zone_frac <= 1:
-        raise HTTPException(
-            status_code=400,
-            detail="shelf_zone_frac must be between 0 and 1.",
-        )
-
-    if not 0 < exit_zone_frac <= 1:
-        raise HTTPException(
-            status_code=400,
-            detail="exit_zone_frac must be between 0 and 1.",
-        )
-
-    if frame_stride < 1:
-        raise HTTPException(
-            status_code=400,
-            detail="frame_stride must be at least 1.",
+            detail="Unsupported video format.",
         )
 
     temporary_path = None
 
     try:
-        # ----------------------------------------------------
-        # Save uploaded video to temporary storage
-        # ----------------------------------------------------
 
         with tempfile.NamedTemporaryFile(
             delete=False,
             suffix=extension,
-        ) as temporary_file:
+        ) as temp:
 
-            temporary_path = temporary_file.name
+            temporary_path = temp.name
 
             shutil.copyfileobj(
                 file.file,
-                temporary_file,
+                temp,
             )
 
-        # ----------------------------------------------------
-        # Run existing computer-vision pipeline
-        # ----------------------------------------------------
+        messages = []
 
         processed_frames = 0
-        messages = []
-        detected_alerts = []
 
         pipeline = process_video(
             video_path=temporary_path,
@@ -243,14 +588,7 @@ async def analyze_video(
             if message:
                 messages.append(message)
 
-                if "flagged for review" in message:
-                    detected_alerts.append(message)
-
-        # ----------------------------------------------------
-        # Get current open alerts from Supabase
-        # ----------------------------------------------------
-
-        open_alerts = store_events.get_open_alerts(
+        alerts = store_events.get_open_alerts(
             store_id=store_id
         )
 
@@ -260,8 +598,7 @@ async def analyze_video(
             "store_id": store_id,
             "processed_frames": processed_frames,
             "messages": messages,
-            "detected_alerts": detected_alerts,
-            "open_alerts": open_alerts,
+            "open_alerts": alerts,
         }
 
     except Exception as exc:
@@ -273,39 +610,29 @@ async def analyze_video(
 
     finally:
 
-        # ----------------------------------------------------
-        # Delete temporary uploaded video
-        # ----------------------------------------------------
-
-        if temporary_path and os.path.exists(
+        if (
             temporary_path
+            and os.path.exists(temporary_path)
         ):
+
             try:
                 os.remove(temporary_path)
             except OSError:
                 pass
 
 
-# ============================================================
-# ALERT ENDPOINTS
-# ============================================================
+# ---------------------------------------------------------
+# ALERTS
+# ---------------------------------------------------------
 
 @app.get("/stores/{store_id}/alerts")
-def get_store_alerts(
+def get_alerts(
     store_id: str,
     limit: int = 100,
 ):
-    """
-    Return alerts belonging to a store.
-    """
-
-    if limit < 1 or limit > 1000:
-        raise HTTPException(
-            status_code=400,
-            detail="limit must be between 1 and 1000.",
-        )
 
     try:
+
         alerts = store_events.get_all_alerts(
             store_id=store_id,
             limit=limit,
@@ -313,70 +640,64 @@ def get_store_alerts(
 
         return {
             "success": True,
-            "store_id": store_id,
             "count": len(alerts),
             "alerts": alerts,
         }
 
     except Exception as exc:
+
         raise HTTPException(
             status_code=500,
-            detail=f"Could not retrieve alerts: {str(exc)}",
+            detail=str(exc),
         )
 
 
 @app.get("/stores/{store_id}/alerts/open")
-def get_open_store_alerts(
+def get_open_alerts(
     store_id: str,
 ):
-    """
-    Return only currently open security alerts.
-    """
 
     try:
+
         alerts = store_events.get_open_alerts(
             store_id=store_id
         )
 
         return {
             "success": True,
-            "store_id": store_id,
             "count": len(alerts),
             "alerts": alerts,
         }
 
     except Exception as exc:
+
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Could not retrieve open alerts: "
-                f"{str(exc)}"
-            ),
+            detail=str(exc),
         )
 
 
 @app.patch("/alerts/{alert_id}/review")
 def review_alert(
     alert_id: str,
-    request: AlertReviewRequest,
+    request: ReviewRequest,
 ):
-    """
-    Confirm or dismiss an alert.
-    """
 
     if request.status not in {
         "confirmed",
         "dismissed",
     }:
+
         raise HTTPException(
             status_code=400,
             detail=(
-                "status must be either "
-                "'confirmed' or 'dismissed'."
+                "Status must be "
+                "confirmed or dismissed."
             ),
         )
 
     try:
+
         result = store_events.review_alert(
             alert_id=alert_id,
             new_status=request.status,
@@ -386,38 +707,29 @@ def review_alert(
 
         return {
             "success": True,
-            "alert_id": alert_id,
-            "status": request.status,
             "result": result,
         }
 
     except Exception as exc:
+
         raise HTTPException(
             status_code=500,
-            detail=f"Could not review alert: {str(exc)}",
+            detail=str(exc),
         )
 
 
-# ============================================================
-# VISIT ENDPOINTS
-# ============================================================
+# ---------------------------------------------------------
+# VISITS
+# ---------------------------------------------------------
 
 @app.get("/stores/{store_id}/visits")
-def get_visit_history(
+def get_visits(
     store_id: str,
     limit: int = 50,
 ):
-    """
-    Return recent customer visit history.
-    """
-
-    if limit < 1 or limit > 1000:
-        raise HTTPException(
-            status_code=400,
-            detail="limit must be between 1 and 1000.",
-        )
 
     try:
+
         visits = store_events.get_visit_history(
             store_id=store_id,
             limit=limit,
@@ -425,124 +737,105 @@ def get_visit_history(
 
         return {
             "success": True,
-            "store_id": store_id,
             "count": len(visits),
             "visits": visits,
         }
 
     except Exception as exc:
+
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Could not retrieve visit history: "
-                f"{str(exc)}"
-            ),
+            detail=str(exc),
         )
 
 
 @app.get("/visits/{visit_id}/items")
-def get_visit_items(
+def get_items(
     visit_id: str,
 ):
-    """
-    Return AI-detected item events for a visit.
-    """
 
     try:
+
         items = store_events.get_item_events(
-            visit_id=visit_id
+            visit_id
         )
 
         return {
             "success": True,
-            "visit_id": visit_id,
             "count": len(items),
             "items": items,
         }
 
     except Exception as exc:
+
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Could not retrieve item events: "
-                f"{str(exc)}"
-            ),
+            detail=str(exc),
         )
 
 
 @app.get("/visits/{visit_id}/billing")
-def get_visit_billing(
+def get_billing(
     visit_id: str,
 ):
-    """
-    Return billing events associated with a visit.
-    """
 
     try:
+
         billing = store_events.get_billing_events(
-            visit_id=visit_id
+            visit_id
         )
 
         return {
             "success": True,
-            "visit_id": visit_id,
             "count": len(billing),
             "billing": billing,
         }
 
     except Exception as exc:
+
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Could not retrieve billing events: "
-                f"{str(exc)}"
-            ),
+            detail=str(exc),
         )
 
 
 @app.get("/visits/{visit_id}/unpaid")
-def get_unpaid_items(
+def get_unpaid(
     visit_id: str,
 ):
-    """
-    Compare detected shelf items with billing events.
-    """
 
     try:
-        unpaid_count = store_events.get_unpaid_count(
-            visit_id=visit_id
+
+        count = store_events.get_unpaid_count(
+            visit_id
         )
 
         return {
             "success": True,
             "visit_id": visit_id,
-            "unpaid_item_count": unpaid_count,
-            "flagged": unpaid_count > 0,
+            "unpaid_item_count": count,
+            "flagged": count > 0,
         }
 
     except Exception as exc:
+
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Could not calculate unpaid items: "
-                f"{str(exc)}"
-            ),
+            detail=str(exc),
         )
 
 
-# ============================================================
+# ---------------------------------------------------------
 # BILLING
-# ============================================================
+# ---------------------------------------------------------
 
 @app.post("/billing")
-def create_billing_event(
-    request: BillingEventRequest,
+def add_billing(
+    request: BillingRequest,
 ):
-    """
-    Add a billing event to a customer visit.
-    """
 
     try:
+
         result = store_events.log_billing_event(
             visit_id=request.visit_id,
             item_label=request.item_label,
@@ -552,23 +845,20 @@ def create_billing_event(
 
         return {
             "success": True,
-            "visit_id": request.visit_id,
             "billing": result,
         }
 
     except Exception as exc:
+
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Could not create billing event: "
-                f"{str(exc)}"
-            ),
+            detail=str(exc),
         )
 
 
-# ============================================================
-# APPLICATION ENTRY POINT
-# ============================================================
+# ---------------------------------------------------------
+# LOCAL SERVER
+# ---------------------------------------------------------
 
 if __name__ == "__main__":
 
@@ -578,10 +868,7 @@ if __name__ == "__main__":
         "main:app",
         host="0.0.0.0",
         port=int(
-            os.getenv(
-                "PORT",
-                "8000",
-            )
+            os.getenv("PORT", "8000")
         ),
         reload=False,
     )
