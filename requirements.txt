@@ -1,18 +1,8 @@
-fastapi
-uvicorn[standard]
-python-multipart
-
-pillow
-numpy
-pandas
-matplotlib
-opencv-python-headless
-
-supabase
-python-dotenv
-
---extra-index-url https://download.pytorch.org/whl/cpu
-torch
-torchvision
-
-ultralytics
+streamlit>=1.37,<2
+supabase>=2.0,<3
+ultralytics>=8.3,<9
+opencv-python-headless>=4.8,<5
+numpy>=1.26,<3
+pandas>=2.0,<3
+Pillow>=10,<12
+python-dotenv>=1,<2
