@@ -1,9 +1,13 @@
-streamlit
+fastapi
+uvicorn[standard]
+python-multipart
+
 pillow
 numpy
 pandas
 matplotlib
 opencv-python-headless
+
 supabase
 python-dotenv
 
@@ -11,5 +15,4 @@ python-dotenv
 torch
 torchvision
 
-# Computer vision / person detection
 ultralytics
