@@ -1,0 +1,35 @@
+from collections import Counter
+
+
+def reconcile(
+    observed_items,
+    billed_items,
+):
+
+    observed = Counter(
+        observed_items
+    )
+
+    billed = Counter(
+        billed_items
+    )
+
+    unbilled = (
+        observed - billed
+    )
+
+    return {
+        "observed":
+            dict(observed),
+
+        "billed":
+            dict(billed),
+
+        "unbilled":
+            dict(unbilled),
+
+        "unpaid_item_count":
+            sum(
+                unbilled.values()
+            ),
+    }
