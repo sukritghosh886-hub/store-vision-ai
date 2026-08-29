@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import io
-from typing import Any
+from typing import Optional
 
 import cv2
 import numpy as np
@@ -11,27 +11,10 @@ from ultralytics import YOLO
 
 MODEL_NAME = "yolov8n.pt"
 
-PERSON_CLASS = 0
-
-# COCO classes that are useful as generic retail-object detections.
-COCO_ITEMS = {
-    24: "backpack",
-    26: "handbag",
-    39: "bottle",
-    41: "cup",
-    45: "bowl",
-    46: "banana",
-    47: "apple",
-    49: "orange",
-    67: "cell_phone",
-}
+_model: Optional[YOLO] = None
 
 
-_model = None
-
-
-def get_model():
-
+def get_model() -> YOLO:
     global _model
 
     if _model is None:
@@ -40,13 +23,13 @@ def get_model():
     return _model
 
 
-def _bytes_to_bgr(image_bytes: bytes):
+def decode_image(image_bytes: bytes) -> np.ndarray:
 
     image = Image.open(
         io.BytesIO(image_bytes)
     ).convert("RGB")
 
-    rgb = np.array(image)
+    rgb = np.asarray(image)
 
     return cv2.cvtColor(
         rgb,
@@ -54,101 +37,96 @@ def _bytes_to_bgr(image_bytes: bytes):
     )
 
 
-def process_image(
-    image: Any,
-    confidence: float = 0.40,
-    input_is_frame: bool = False,
+def detect_objects(
+    frame: np.ndarray,
+    confidence: float = 0.35,
 ):
-
-    if input_is_frame:
-
-        frame = image.copy()
-
-    else:
-
-        frame = _bytes_to_bgr(
-            image
-        )
 
     model = get_model()
 
-    results = model.predict(
+    result = model.predict(
         frame,
         conf=confidence,
         verbose=False,
-    )
+    )[0]
+
+    annotated = frame.copy()
 
     detections = []
 
-    output = frame.copy()
+    if result.boxes is None:
+        return annotated, detections
 
-    for result in results:
+    for box in result.boxes:
 
-        if result.boxes is None:
-            continue
+        cls_id = int(
+            box.cls.item()
+        )
 
-        for box in result.boxes:
+        score = float(
+            box.conf.item()
+        )
 
-            cls = int(
-                box.cls[0].item()
-            )
+        x1, y1, x2, y2 = map(
+            int,
+            box.xyxy[0].tolist(),
+        )
 
-            conf = float(
-                box.conf[0].item()
-            )
+        label = result.names[
+            cls_id
+        ]
 
-            x1, y1, x2, y2 = map(
-                int,
-                box.xyxy[0].tolist(),
-            )
+        detections.append(
+            {
+                "class_id": cls_id,
+                "label": label,
+                "confidence": score,
+                "bbox": [
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                ],
+            }
+        )
 
-            if cls == PERSON_CLASS:
+        cv2.rectangle(
+            annotated,
+            (x1, y1),
+            (x2, y2),
+            (0, 180, 255),
+            2,
+        )
 
-                label = "person"
+        cv2.putText(
+            annotated,
+            f"{label} {score:.2f}",
+            (x1, max(20, y1 - 8)),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.55,
+            (0, 180, 255),
+            2,
+        )
 
-            elif cls in COCO_ITEMS:
+    return annotated, detections
 
-                label = COCO_ITEMS[cls]
 
-            else:
+def process_image(
+    image_bytes: bytes,
+    confidence: float = 0.35,
+):
 
-                continue
+    frame = decode_image(
+        image_bytes
+    )
 
-            detections.append(
-                {
-                    "label": label,
-                    "class_id": cls,
-                    "confidence": round(
-                        conf,
-                        3,
-                    ),
-                    "x1": x1,
-                    "y1": y1,
-                    "x2": x2,
-                    "y2": y2,
-                }
-            )
-
-            # Draw bounding box.
-            cv2.rectangle(
-                output,
-                (x1, y1),
-                (x2, y2),
-                (0, 180, 255),
-                2,
-            )
-
-            cv2.putText(
-                output,
-                f"{label} {conf:.2f}",
-                (x1, max(20, y1 - 8)),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.55,
-                (0, 180, 255),
-                2,
-            )
+    annotated, detections = detect_objects(
+        frame,
+        confidence,
+    )
 
     return {
-        "image": output,
+        "image": annotated,
         "detections": detections,
+        "count": len(detections),
     }
