@@ -84,6 +84,7 @@ page = st.sidebar.radio(
         "Live Monitor",
         "SKU Recognition",
         "Security Alerts",
+         "AI Retail Assistant",
     ],
 )
 
