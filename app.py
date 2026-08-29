@@ -69,6 +69,131 @@ except Exception as exc:
     st.exception(exc)
     st.stop()
 
+# =========================================================
+# AI RETAIL ASSISTANT
+# =========================================================
+
+elif page == "AI Retail Assistant":
+
+    from backend.retail_assistant import (
+        RetailAssistant,
+    )
+
+    st.title(
+        "🤖 AI Retail Assistant"
+    )
+
+    st.caption(
+        "Natural-language intelligence over your "
+        "retail data."
+    )
+
+    assistant = RetailAssistant(
+        supabase
+    )
+
+    examples = [
+        "Which products are low in stock?",
+        "What should I reorder?",
+        "What are my sales and revenue?",
+        "Which products are best selling?",
+        "Do I have any open alerts?",
+        "Are there empty shelves?",
+        "How many visitors have we tracked?",
+        "Give me a business overview.",
+    ]
+
+    st.markdown(
+        "### Example questions"
+    )
+
+    cols = st.columns(2)
+
+    for index, example in enumerate(
+        examples
+    ):
+
+        with cols[index % 2]:
+
+            if st.button(
+                example,
+                key=f"assistant_example_{index}",
+                use_container_width=True,
+            ):
+
+                st.session_state[
+                    "assistant_question"
+                ] = example
+
+    question = st.text_input(
+        "Ask Store Vision AI",
+        value=st.session_state.get(
+            "assistant_question",
+            "",
+        ),
+        placeholder=(
+            "Ask about inventory, sales, "
+            "shelves, alerts or visitors..."
+        ),
+    )
+
+    if st.button(
+        "Ask AI Assistant",
+        type="primary",
+    ):
+
+        if not question.strip():
+
+            st.warning(
+                "Enter a question first."
+            )
+
+        else:
+
+            with st.spinner(
+                "Analyzing retail data..."
+            ):
+
+                try:
+
+                    answer = assistant.answer(
+                        question
+                    )
+
+                    st.session_state[
+                        "assistant_answer"
+                    ] = answer
+
+                except Exception as exc:
+
+                    st.error(
+                        "Assistant error"
+                    )
+
+                    st.exception(exc)
+
+    answer = st.session_state.get(
+        "assistant_answer"
+    )
+
+    if answer:
+
+        st.divider()
+
+        st.markdown(
+            "### 🤖 Assistant Response"
+        )
+
+        st.markdown(
+            answer
+        )
+
+        st.caption(
+            "Grounded in the current Supabase "
+            "retail dataset."
+        )
+
+
 
 # ---------------------------------------------------------
 # SIDEBAR
