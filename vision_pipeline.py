@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+from collections import Counter
 from typing import Optional
 
 import cv2
@@ -24,7 +25,6 @@ def get_model() -> YOLO:
 
 
 def decode_image(image_bytes: bytes) -> np.ndarray:
-
     image = Image.open(
         io.BytesIO(image_bytes)
     ).convert("RGB")
@@ -41,7 +41,6 @@ def detect_objects(
     frame: np.ndarray,
     confidence: float = 0.35,
 ):
-
     model = get_model()
 
     result = model.predict(
@@ -51,7 +50,6 @@ def detect_objects(
     )[0]
 
     annotated = frame.copy()
-
     detections = []
 
     if result.boxes is None:
@@ -59,22 +57,15 @@ def detect_objects(
 
     for box in result.boxes:
 
-        cls_id = int(
-            box.cls.item()
-        )
-
-        score = float(
-            box.conf.item()
-        )
+        cls_id = int(box.cls.item())
+        score = float(box.conf.item())
 
         x1, y1, x2, y2 = map(
             int,
             box.xyxy[0].tolist(),
         )
 
-        label = result.names[
-            cls_id
-        ]
+        label = result.names[cls_id]
 
         detections.append(
             {
@@ -115,18 +106,68 @@ def process_image(
     image_bytes: bytes,
     confidence: float = 0.35,
 ):
-
-    frame = decode_image(
-        image_bytes
-    )
+    frame = decode_image(image_bytes)
 
     annotated, detections = detect_objects(
         frame,
         confidence,
     )
 
+    counts = Counter(
+        item["label"]
+        for item in detections
+    )
+
     return {
         "image": annotated,
         "detections": detections,
         "count": len(detections),
+        "class_counts": dict(counts),
     }
+
+
+def detect_people(
+    frame: np.ndarray,
+    confidence: float = 0.35,
+):
+    model = get_model()
+
+    result = model.predict(
+        frame,
+        conf=confidence,
+        classes=[0],
+        verbose=False,
+    )[0]
+
+    detections = []
+
+    if result.boxes is None:
+        return detections
+
+    for box in result.boxes:
+
+        score = float(box.conf.item())
+
+        x1, y1, x2, y2 = map(
+            int,
+            box.xyxy[0].tolist(),
+        )
+
+        detections.append(
+            {
+                "label": "person",
+                "confidence": score,
+                "bbox": [
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                ],
+                "center": (
+                    (x1 + x2) // 2,
+                    (y1 + y2) // 2,
+                ),
+            }
+        )
+
+    return detections
