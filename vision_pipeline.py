@@ -1,173 +1,612 @@
+"""
+Store Vision AI - Vision Inference Engine
+
+Performance profiles:
+
+AUTO
+    Automatically uses FULL_GPU when CUDA is available.
+    Otherwise uses LIGHT_CPU.
+
+FULL_GPU
+    High-performance YOLO model + high resolution + CUDA.
+
+LIGHT_CPU
+    Lightweight YOLO model + lower resolution + CPU.
+
+The GPU path is preserved and is NOT downgraded.
+"""
+
 from __future__ import annotations
 
-import io
-from collections import Counter
-from typing import Optional
+import os
+from typing import Any, Dict, List
 
 import cv2
 import numpy as np
-from PIL import Image
+import torch
 from ultralytics import YOLO
 
 
-MODEL_NAME = "yolov8n.pt"
+# ============================================================
+# MODEL CONFIGURATION
+# ============================================================
 
-_model: Optional[YOLO] = None
+FULL_MODEL_NAME = os.getenv(
+    "STORE_VISION_GPU_MODEL",
+    "yolov8m.pt"
+)
+
+LIGHT_MODEL_NAME = os.getenv(
+    "STORE_VISION_CPU_MODEL",
+    "yolov8n.pt"
+)
+
+FULL_IMGSZ = int(
+    os.getenv(
+        "STORE_VISION_GPU_IMGSZ",
+        "1280"
+    )
+)
+
+LIGHT_IMGSZ = int(
+    os.getenv(
+        "STORE_VISION_CPU_IMGSZ",
+        "640"
+    )
+)
+
+DEFAULT_PROFILE = os.getenv(
+    "STORE_VISION_PROFILE",
+    "auto"
+).strip().lower()
 
 
-def get_model() -> YOLO:
-    global _model
-
-    if _model is None:
-        _model = YOLO(MODEL_NAME)
-
-    return _model
+VALID_PROFILES = {
+    "auto",
+    "full_gpu",
+    "light_cpu",
+}
 
 
-def decode_image(image_bytes: bytes) -> np.ndarray:
-    image = Image.open(
-        io.BytesIO(image_bytes)
-    ).convert("RGB")
+# Backward compatibility
+MODEL_NAME = LIGHT_MODEL_NAME
 
-    rgb = np.asarray(image)
 
-    return cv2.cvtColor(
-        rgb,
-        cv2.COLOR_RGB2BGR,
+# Cache loaded models
+_models: Dict[str, YOLO] = {}
+
+
+# ============================================================
+# HARDWARE DETECTION
+# ============================================================
+
+def cuda_available() -> bool:
+    """
+    Check whether CUDA GPU is available.
+    """
+    try:
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
+
+
+# ============================================================
+# PROFILE MANAGEMENT
+# ============================================================
+
+def resolve_profile(
+    profile: str | None = None
+) -> str:
+    """
+    Resolve requested profile.
+
+    AUTO:
+        GPU available -> FULL_GPU
+        GPU unavailable -> LIGHT_CPU
+    """
+
+    requested = (
+        profile or DEFAULT_PROFILE
+    ).strip().lower()
+
+    if requested not in VALID_PROFILES:
+        raise ValueError(
+            f"Unknown profile '{requested}'. "
+            f"Choose: auto, full_gpu, light_cpu."
+        )
+
+    # Automatic hardware selection
+    if requested == "auto":
+
+        if cuda_available():
+            return "full_gpu"
+
+        return "light_cpu"
+
+    # Explicit GPU request
+    if requested == "full_gpu":
+
+        if not cuda_available():
+
+            raise RuntimeError(
+                "FULL_GPU requires a CUDA-capable GPU. "
+                "Select LIGHT_CPU or AUTO on this machine."
+            )
+
+    return requested
+
+
+def get_profile_info(
+    profile: str | None = None
+) -> Dict[str, Any]:
+
+    resolved = resolve_profile(profile)
+
+    if resolved == "full_gpu":
+
+        return {
+            "profile": "full_gpu",
+            "label": "Full GPU",
+            "model": FULL_MODEL_NAME,
+            "imgsz": FULL_IMGSZ,
+            "device": "cuda:0",
+            "half_precision": True,
+            "description":
+                "Maximum-performance GPU inference."
+        }
+
+    return {
+        "profile": "light_cpu",
+        "label": "Light CPU",
+        "model": LIGHT_MODEL_NAME,
+        "imgsz": LIGHT_IMGSZ,
+        "device": "cpu",
+        "half_precision": False,
+        "description":
+            "CPU-friendly inference for ordinary computers."
+    }
+
+
+def get_available_profiles() -> List[Dict[str, Any]]:
+    """
+    Return profiles available on this machine.
+    """
+
+    profiles = [
+
+        {
+            "value": "auto",
+            "label": "Auto (Recommended)",
+            "available": True,
+            "help":
+                "Automatically selects GPU or CPU."
+        },
+
+        {
+            "value": "light_cpu",
+            "label": "Light CPU",
+            "available": True,
+            "help":
+                "YOLOv8n at 640px for CPU-friendly inference."
+        },
+    ]
+
+    if cuda_available():
+
+        profiles.append(
+            {
+                "value": "full_gpu",
+                "label": "Full GPU",
+                "available": True,
+                "help":
+                    f"{FULL_MODEL_NAME} at "
+                    f"{FULL_IMGSZ}px using CUDA."
+            }
+        )
+
+    return profiles
+
+
+# ============================================================
+# MODEL LOADING
+# ============================================================
+
+def get_model(
+    profile: str | None = None
+) -> YOLO:
+
+    resolved = resolve_profile(profile)
+
+    # Reuse already-loaded model
+    if resolved in _models:
+        return _models[resolved]
+
+    settings = get_profile_info(resolved)
+
+    print(
+        f"Loading Store Vision AI model: "
+        f"{settings['model']} "
+        f"({resolved})"
     )
 
+    model = YOLO(
+        settings["model"]
+    )
+
+    _models[resolved] = model
+
+    return model
+
+
+# ============================================================
+# IMAGE DECODING
+# ============================================================
+
+def decode_image(
+    image_bytes: bytes
+) -> np.ndarray:
+
+    if not image_bytes:
+        raise ValueError(
+            "No image data was provided."
+        )
+
+    array = np.frombuffer(
+        image_bytes,
+        dtype=np.uint8
+    )
+
+    frame = cv2.imdecode(
+        array,
+        cv2.IMREAD_COLOR
+    )
+
+    if frame is None:
+
+        raise ValueError(
+            "Could not decode uploaded image."
+        )
+
+    return frame
+
+
+# ============================================================
+# OBJECT DETECTION
+# ============================================================
 
 def detect_objects(
     frame: np.ndarray,
     confidence: float = 0.35,
+    profile: str | None = None,
 ):
-    model = get_model()
 
-    result = model.predict(
-        frame,
-        conf=confidence,
-        verbose=False,
-    )[0]
+    if frame is None:
 
-    annotated = frame.copy()
+        raise ValueError(
+            "Image frame is empty."
+        )
+
+    if not isinstance(frame, np.ndarray):
+
+        raise ValueError(
+            "frame must be a numpy array."
+        )
+
+    if frame.size == 0:
+
+        raise ValueError(
+            "Image frame contains no data."
+        )
+
+    if not 0.0 < confidence < 1.0:
+
+        raise ValueError(
+            "Confidence must be between 0 and 1."
+        )
+
+    resolved = resolve_profile(profile)
+
+    settings = get_profile_info(
+        resolved
+    )
+
+    model = get_model(
+        resolved
+    )
+
+    predict_kwargs = {
+
+        "source": frame,
+
+        "conf": float(confidence),
+
+        "imgsz": settings["imgsz"],
+
+        "device":
+            0
+            if resolved == "full_gpu"
+            else "cpu",
+
+        "verbose": False,
+
+        "max_det": 300,
+    }
+
+    # FP16 acceleration on GPU
+    if resolved == "full_gpu":
+
+        predict_kwargs["half"] = True
+
+    results = model.predict(
+        **predict_kwargs
+    )
+
+    if not results:
+
+        return frame.copy(), []
+
+    result = results[0]
+
+    annotated = result.plot()
+
     detections = []
 
-    if result.boxes is None:
-        return annotated, detections
+    names = result.names
 
-    for box in result.boxes:
+    if result.boxes is not None:
 
-        cls_id = int(box.cls.item())
-        score = float(box.conf.item())
+        for box in result.boxes:
 
-        x1, y1, x2, y2 = map(
-            int,
-            box.xyxy[0].tolist(),
-        )
+            class_id = int(
+                box.cls[0].item()
+            )
 
-        label = result.names[cls_id]
+            conf = float(
+                box.conf[0].item()
+            )
 
-        detections.append(
-            {
-                "class_id": cls_id,
-                "label": label,
-                "confidence": score,
-                "bbox": [
-                    x1,
-                    y1,
-                    x2,
-                    y2,
-                ],
-            }
-        )
+            xyxy = [
+                float(value)
+                for value
+                in box.xyxy[0].tolist()
+            ]
 
-        cv2.rectangle(
-            annotated,
-            (x1, y1),
-            (x2, y2),
-            (0, 180, 255),
-            2,
-        )
+            detections.append(
 
-        cv2.putText(
-            annotated,
-            f"{label} {score:.2f}",
-            (x1, max(20, y1 - 8)),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.55,
-            (0, 180, 255),
-            2,
-        )
+                {
+                    "class_id":
+                        class_id,
+
+                    "class_name":
+                        str(
+                            names[class_id]
+                        ),
+
+                    "confidence":
+                        conf,
+
+                    "bbox":
+                        xyxy,
+                }
+            )
 
     return annotated, detections
 
 
+# ============================================================
+# HIGH-LEVEL IMAGE PROCESSING
+# ============================================================
+
 def process_image(
     image_bytes: bytes,
     confidence: float = 0.35,
+    profile: str | None = None,
 ):
-    frame = decode_image(image_bytes)
+
+    frame = decode_image(
+        image_bytes
+    )
 
     annotated, detections = detect_objects(
+
         frame,
-        confidence,
+
+        confidence=confidence,
+
+        profile=profile,
     )
 
-    counts = Counter(
-        item["label"]
-        for item in detections
+    class_counts = {}
+
+    for detection in detections:
+
+        label = detection[
+            "class_name"
+        ]
+
+        class_counts[label] = (
+            class_counts.get(label, 0)
+            + 1
+        )
+
+    settings = get_profile_info(
+        profile
     )
+
+    resolved = resolve_profile(
+        profile
+    )
+
+    height, width = frame.shape[:2]
 
     return {
-        "image": annotated,
-        "detections": detections,
-        "count": len(detections),
-        "class_counts": dict(counts),
+
+        "image":
+            annotated,
+
+        "detections":
+            detections,
+
+        "count":
+            len(detections),
+
+        "class_counts":
+            class_counts,
+
+        "profile":
+            resolved,
+
+        "profile_label":
+            settings["label"],
+
+        "model":
+            settings["model"],
+
+        "device":
+            settings["device"],
+
+        "imgsz":
+            settings["imgsz"],
+
+        "image_size":
+            (width, height),
     }
 
+
+# ============================================================
+# PEOPLE DETECTION
+# ============================================================
 
 def detect_people(
     frame: np.ndarray,
     confidence: float = 0.35,
+    profile: str | None = None,
 ):
-    model = get_model()
 
-    result = model.predict(
-        frame,
-        conf=confidence,
-        classes=[0],
-        verbose=False,
-    )[0]
+    if frame is None:
+
+        raise ValueError(
+            "Image frame is empty."
+        )
+
+    if not 0.0 < confidence < 1.0:
+
+        raise ValueError(
+            "Confidence must be between 0 and 1."
+        )
+
+    resolved = resolve_profile(
+        profile
+    )
+
+    settings = get_profile_info(
+        resolved
+    )
+
+    model = get_model(
+        resolved
+    )
+
+    predict_kwargs = {
+
+        "source": frame,
+
+        "conf": float(confidence),
+
+        "imgsz":
+            settings["imgsz"],
+
+        "device":
+            0
+            if resolved == "full_gpu"
+            else "cpu",
+
+        # COCO class 0 = person
+        "classes": [0],
+
+        "verbose": False,
+
+        "max_det": 300,
+    }
+
+    if resolved == "full_gpu":
+
+        predict_kwargs["half"] = True
+
+    results = model.predict(
+        **predict_kwargs
+    )
+
+    if not results:
+
+        return frame.copy(), []
+
+    result = results[0]
+
+    annotated = result.plot()
 
     detections = []
 
-    if result.boxes is None:
-        return detections
+    if result.boxes is not None:
 
-    for box in result.boxes:
+        for box in result.boxes:
 
-        score = float(box.conf.item())
+            confidence_value = float(
+                box.conf[0].item()
+            )
 
-        x1, y1, x2, y2 = map(
-            int,
-            box.xyxy[0].tolist(),
-        )
+            xyxy = [
+                float(value)
+                for value
+                in box.xyxy[0].tolist()
+            ]
 
-        detections.append(
-            {
-                "label": "person",
-                "confidence": score,
-                "bbox": [
-                    x1,
-                    y1,
-                    x2,
-                    y2,
-                ],
-                "center": (
-                    (x1 + x2) // 2,
-                    (y1 + y2) // 2,
-                ),
-            }
-        )
+            detections.append(
 
-    return detections
+                {
+                    "class_id": 0,
+
+                    "class_name":
+                        "person",
+
+                    "confidence":
+                        confidence_value,
+
+                    "bbox":
+                        xyxy,
+                }
+            )
+
+    return annotated, detections
+
+
+# ============================================================
+# PUBLIC API
+# ============================================================
+
+__all__ = [
+
+    "MODEL_NAME",
+
+    "FULL_MODEL_NAME",
+
+    "LIGHT_MODEL_NAME",
+
+    "cuda_available",
+
+    "resolve_profile",
+
+    "get_profile_info",
+
+    "get_available_profiles",
+
+    "get_model",
+
+    "decode_image",
+
+    "detect_objects",
+
+    "detect_people",
+
+    "process_image",
+]
