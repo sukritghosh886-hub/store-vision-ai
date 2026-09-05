@@ -1,12 +1,7 @@
 import streamlit as st
+import pandas as pd
 
-from backend.retail_assistant import (
-    RetailAssistant,
-)
-
-from backend.supabase_client import (
-    create_supabase_client,
-)
+from backend.database import get_table
 
 
 st.set_page_config(
@@ -15,158 +10,106 @@ st.set_page_config(
     layout="wide",
 )
 
+st.title("🤖 AI Retail Assistant")
 
-# ---------------------------------------------------------
-# Header
-# ---------------------------------------------------------
-
-st.title(
-    "🤖 AI Retail Assistant"
+st.write(
+    "Store intelligence generated from your operational data."
 )
 
-st.caption(
-    "Ask natural-language questions about inventory, "
-    "sales, shelves, visitors and security alerts."
+products = get_table("products")
+sales = get_table("sales")
+visits = get_table("store_visits")
+
+if not visits:
+    visits = get_table("visits")
+
+st.header("📊 Store Summary")
+
+col1, col2, col3 = st.columns(3)
+
+col1.metric(
+    "Products",
+    len(products),
 )
 
-
-# ---------------------------------------------------------
-# Supabase
-# ---------------------------------------------------------
-
-try:
-
-    supabase = create_supabase_client()
-
-except Exception as exc:
-
-    st.error(
-        "Supabase connection failed."
-    )
-
-    st.exception(exc)
-
-    st.stop()
-
-
-assistant = RetailAssistant(
-    supabase
+col2.metric(
+    "Sales",
+    len(sales),
 )
 
-
-# ---------------------------------------------------------
-# Example questions
-# ---------------------------------------------------------
-
-st.markdown(
-    "### Try asking"
+col3.metric(
+    "Visits",
+    len(visits),
 )
 
-examples = [
-    "Which products are low in stock?",
-    "What should I reorder?",
-    "What are my sales and revenue?",
-    "Which products are best selling?",
-    "Do I have any open alerts?",
-    "Are there empty shelves?",
-    "How many visitors have we tracked?",
-    "Give me a business overview.",
-]
+st.divider()
 
+st.header("🧠 Automatic Insights")
 
-cols = st.columns(2)
+if products:
 
-for index, example in enumerate(
-    examples
-):
+    low_stock = [
+        p
+        for p in products
+        if int(
+            p.get("stock_quantity") or 0
+        )
+        <= int(
+            p.get("minimum_stock") or 0
+        )
+    ]
 
-    with cols[index % 2]:
-
-        if st.button(
-            example,
-            use_container_width=True,
-            key=f"example_{index}",
-        ):
-
-            st.session_state[
-                "retail_question"
-            ] = example
-
-
-# ---------------------------------------------------------
-# Question input
-# ---------------------------------------------------------
-
-question = st.text_input(
-    "Ask your retail assistant",
-    value=st.session_state.get(
-        "retail_question",
-        "",
-    ),
-    placeholder=(
-        "Example: Which products should I reorder?"
-    ),
-)
-
-
-if st.button(
-    "Ask Assistant",
-    type="primary",
-):
-
-    if not question.strip():
+    if low_stock:
 
         st.warning(
-            "Please enter a question."
+            f"{len(low_stock)} product(s) "
+            "need inventory attention."
         )
+
+        for product in low_stock:
+
+            st.write(
+                f"• **{product.get('name')}** — "
+                f"stock: "
+                f"{product.get('stock_quantity')}"
+            )
 
     else:
 
-        with st.spinner(
-            "Analyzing your retail data..."
-        ):
+        st.success(
+            "Inventory levels are currently healthy."
+        )
 
-            try:
+if sales:
 
-                answer = assistant.answer(
-                    question
-                )
+    df = pd.DataFrame(sales)
 
-                st.session_state[
-                    "last_answer"
-                ] = answer
+    if "total_amount" in df.columns:
 
-            except Exception as exc:
+        df["total_amount"] = pd.to_numeric(
+            df["total_amount"],
+            errors="coerce",
+        ).fillna(0)
 
-                st.error(
-                    "The assistant could not "
-                    "complete the query."
-                )
+        revenue = df[
+            "total_amount"
+        ].sum()
 
-                st.exception(exc)
+        st.info(
+            f"Recorded revenue: "
+            f"₹{revenue:,.2f}"
+        )
 
+if visits:
 
-# ---------------------------------------------------------
-# Answer
-# ---------------------------------------------------------
-
-if st.session_state.get(
-    "last_answer"
-):
-
-    st.divider()
-
-    st.markdown(
-        "### Assistant"
+    st.success(
+        f"The system has recorded "
+        f"{len(visits)} visitor records."
     )
 
-    st.markdown(
-        st.session_state[
-            "last_answer"
-        ]
-    )
+st.divider()
 
-    st.caption(
-        "Answers are generated from the "
-        "current Supabase retail data."
-    )
+st.caption(
+    "Future version: connect this layer to an LLM "
+    "for natural-language retail recommendations."
+)
