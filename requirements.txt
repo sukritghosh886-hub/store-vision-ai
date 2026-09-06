@@ -1,14 +1,17 @@
-streamlit>=1.37,<2
-supabase>=2.0,<3
+streamlit
+fastapi
+uvicorn[standard]
 
-ultralytics>=8.3,<9
-supervision>=0.24,<1
+supabase
+python-dotenv
 
-opencv-python-headless>=4.8,<5
-numpy>=1.26,<3
-pandas>=2.0,<3
-Pillow>=10,<12
+opencv-python-headless
+numpy
+pandas
+Pillow
 
-python-dotenv>=1,<2
+ultralytics
+supervision
 
-PyYAML
+torch
+torchvision
