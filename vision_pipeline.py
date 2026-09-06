@@ -1,19 +1,20 @@
 """
-Store Vision AI - Vision Inference Engine
+Store Vision AI - Multi-Instance Object Detection Engine
 
-Performance profiles:
+Designed for:
+- Multiple copies of the same product
+- Overlapping products
+- Books
+- Bottles
+- Caps
+- Stickers
+- Other store products
 
-AUTO
-    Automatically uses FULL_GPU when CUDA is available.
-    Otherwise uses LIGHT_CPU.
+Recommended model:
+    A CUSTOM YOLO INSTANCE-SEGMENTATION MODEL
 
-FULL_GPU
-    High-performance YOLO model + high resolution + CUDA.
-
-LIGHT_CPU
-    Lightweight YOLO model + lower resolution + CPU.
-
-The GPU path is preserved and is NOT downgraded.
+Example:
+    models/store_products_seg.pt
 """
 
 from __future__ import annotations
@@ -28,212 +29,102 @@ from ultralytics import YOLO
 
 
 # ============================================================
-# MODEL CONFIGURATION
+# CONFIGURATION
 # ============================================================
 
-FULL_MODEL_NAME = os.getenv(
-    "STORE_VISION_GPU_MODEL",
-    "yolov8m.pt"
+MODEL_PATH = os.getenv(
+    "STORE_VISION_MODEL",
+    "models/store_products_seg.pt"
 )
 
-LIGHT_MODEL_NAME = os.getenv(
-    "STORE_VISION_CPU_MODEL",
-    "yolov8n.pt"
+CPU_IMGSZ = int(
+    os.getenv(
+        "STORE_VISION_CPU_IMGSZ",
+        "960"
+    )
 )
 
-FULL_IMGSZ = int(
+GPU_IMGSZ = int(
     os.getenv(
         "STORE_VISION_GPU_IMGSZ",
         "1280"
     )
 )
 
-LIGHT_IMGSZ = int(
+DEFAULT_CONFIDENCE = float(
     os.getenv(
-        "STORE_VISION_CPU_IMGSZ",
-        "640"
+        "STORE_VISION_CONFIDENCE",
+        "0.25"
     )
 )
 
-DEFAULT_PROFILE = os.getenv(
-    "STORE_VISION_PROFILE",
-    "auto"
-).strip().lower()
+DEFAULT_IOU = float(
+    os.getenv(
+        "STORE_VISION_IOU",
+        "0.50"
+    )
+)
+
+# IMPORTANT:
+# Increase this so 27, 50, 100+ objects can be returned.
+MAX_DETECTIONS = int(
+    os.getenv(
+        "STORE_VISION_MAX_DETECTIONS",
+        "1000"
+    )
+)
 
 
-VALID_PROFILES = {
-    "auto",
-    "full_gpu",
-    "light_cpu",
-}
+# ============================================================
+# MODEL CACHE
+# ============================================================
 
-
-# Backward compatibility
-MODEL_NAME = LIGHT_MODEL_NAME
-
-
-# Cache loaded models
 _models: Dict[str, YOLO] = {}
 
 
 # ============================================================
-# HARDWARE DETECTION
+# HARDWARE
 # ============================================================
 
 def cuda_available() -> bool:
-    """
-    Check whether CUDA GPU is available.
-    """
     try:
         return bool(torch.cuda.is_available())
     except Exception:
         return False
 
 
+def get_device() -> str:
+    return "cuda:0" if cuda_available() else "cpu"
+
+
 # ============================================================
-# PROFILE MANAGEMENT
+# MODEL
 # ============================================================
 
-def resolve_profile(
-    profile: str | None = None
-) -> str:
+def get_model() -> YOLO:
     """
-    Resolve requested profile.
-
-    AUTO:
-        GPU available -> FULL_GPU
-        GPU unavailable -> LIGHT_CPU
+    Load the custom segmentation model only once.
     """
 
-    requested = (
-        profile or DEFAULT_PROFILE
-    ).strip().lower()
+    device = get_device()
 
-    if requested not in VALID_PROFILES:
-        raise ValueError(
-            f"Unknown profile '{requested}'. "
-            f"Choose: auto, full_gpu, light_cpu."
+    if device in _models:
+        return _models[device]
+
+    if not os.path.exists(MODEL_PATH):
+        raise FileNotFoundError(
+            f"Store Vision AI model not found: {MODEL_PATH}\n"
+            "Train/export your custom segmentation model first."
         )
-
-    # Automatic hardware selection
-    if requested == "auto":
-
-        if cuda_available():
-            return "full_gpu"
-
-        return "light_cpu"
-
-    # Explicit GPU request
-    if requested == "full_gpu":
-
-        if not cuda_available():
-
-            raise RuntimeError(
-                "FULL_GPU requires a CUDA-capable GPU. "
-                "Select LIGHT_CPU or AUTO on this machine."
-            )
-
-    return requested
-
-
-def get_profile_info(
-    profile: str | None = None
-) -> Dict[str, Any]:
-
-    resolved = resolve_profile(profile)
-
-    if resolved == "full_gpu":
-
-        return {
-            "profile": "full_gpu",
-            "label": "Full GPU",
-            "model": FULL_MODEL_NAME,
-            "imgsz": FULL_IMGSZ,
-            "device": "cuda:0",
-            "half_precision": True,
-            "description":
-                "Maximum-performance GPU inference."
-        }
-
-    return {
-        "profile": "light_cpu",
-        "label": "Light CPU",
-        "model": LIGHT_MODEL_NAME,
-        "imgsz": LIGHT_IMGSZ,
-        "device": "cpu",
-        "half_precision": False,
-        "description":
-            "CPU-friendly inference for ordinary computers."
-    }
-
-
-def get_available_profiles() -> List[Dict[str, Any]]:
-    """
-    Return profiles available on this machine.
-    """
-
-    profiles = [
-
-        {
-            "value": "auto",
-            "label": "Auto (Recommended)",
-            "available": True,
-            "help":
-                "Automatically selects GPU or CPU."
-        },
-
-        {
-            "value": "light_cpu",
-            "label": "Light CPU",
-            "available": True,
-            "help":
-                "YOLOv8n at 640px for CPU-friendly inference."
-        },
-    ]
-
-    if cuda_available():
-
-        profiles.append(
-            {
-                "value": "full_gpu",
-                "label": "Full GPU",
-                "available": True,
-                "help":
-                    f"{FULL_MODEL_NAME} at "
-                    f"{FULL_IMGSZ}px using CUDA."
-            }
-        )
-
-    return profiles
-
-
-# ============================================================
-# MODEL LOADING
-# ============================================================
-
-def get_model(
-    profile: str | None = None
-) -> YOLO:
-
-    resolved = resolve_profile(profile)
-
-    # Reuse already-loaded model
-    if resolved in _models:
-        return _models[resolved]
-
-    settings = get_profile_info(resolved)
 
     print(
-        f"Loading Store Vision AI model: "
-        f"{settings['model']} "
-        f"({resolved})"
+        f"Loading Store Vision AI segmentation model: "
+        f"{MODEL_PATH}"
     )
 
-    model = YOLO(
-        settings["model"]
-    )
+    model = YOLO(MODEL_PATH)
 
-    _models[resolved] = model
+    _models[device] = model
 
     return model
 
@@ -262,7 +153,6 @@ def decode_image(
     )
 
     if frame is None:
-
         raise ValueError(
             "Could not decode uploaded image."
         )
@@ -271,70 +161,104 @@ def decode_image(
 
 
 # ============================================================
-# OBJECT DETECTION
+# MASK AREA
+# ============================================================
+
+def calculate_mask_area(
+    mask: np.ndarray
+) -> int:
+
+    return int(
+        np.count_nonzero(mask)
+    )
+
+
+# ============================================================
+# CENTROID
+# ============================================================
+
+def calculate_centroid(
+    bbox: List[float]
+) -> List[float]:
+
+    x1, y1, x2, y2 = bbox
+
+    return [
+        float((x1 + x2) / 2),
+        float((y1 + y2) / 2)
+    ]
+
+
+# ============================================================
+# DETECTION
 # ============================================================
 
 def detect_objects(
     frame: np.ndarray,
-    confidence: float = 0.35,
+    confidence: float = DEFAULT_CONFIDENCE,
+    iou: float = DEFAULT_IOU,
     profile: str | None = None,
-):
+) -> tuple[np.ndarray, List[Dict[str, Any]]]:
 
     if frame is None:
-
         raise ValueError(
             "Image frame is empty."
         )
 
     if not isinstance(frame, np.ndarray):
-
         raise ValueError(
             "frame must be a numpy array."
         )
 
     if frame.size == 0:
-
         raise ValueError(
             "Image frame contains no data."
         )
 
     if not 0.0 < confidence < 1.0:
-
         raise ValueError(
             "Confidence must be between 0 and 1."
         )
 
-    resolved = resolve_profile(profile)
+    if not 0.0 < iou < 1.0:
+        raise ValueError(
+            "IoU must be between 0 and 1."
+        )
 
-    settings = get_profile_info(
-        resolved
-    )
+    model = get_model()
 
-    model = get_model(
-        resolved
+    device = get_device()
+
+    imgsz = (
+        GPU_IMGSZ
+        if device.startswith("cuda")
+        else CPU_IMGSZ
     )
 
     predict_kwargs = {
-
         "source": frame,
 
-        "conf": float(confidence),
+        "conf": confidence,
 
-        "imgsz": settings["imgsz"],
+        "iou": iou,
 
-        "device":
-            0
-            if resolved == "full_gpu"
-            else "cpu",
+        "imgsz": imgsz,
+
+        "device": device,
+
+        "max_det": MAX_DETECTIONS,
 
         "verbose": False,
 
-        "max_det": 300,
+        # Test-time augmentation can improve
+        # difficult/partially occluded detections.
+        "augment": True,
+
+        # Do NOT merge different instances.
+        "agnostic_nms": False,
     }
 
-    # FP16 acceleration on GPU
-    if resolved == "full_gpu":
-
+    if device.startswith("cuda"):
         predict_kwargs["half"] = True
 
     results = model.predict(
@@ -342,55 +266,249 @@ def detect_objects(
     )
 
     if not results:
-
         return frame.copy(), []
 
     result = results[0]
 
-    annotated = result.plot()
+    # ========================================================
+    # DRAW SEGMENTATION RESULT
+    # ========================================================
 
-    detections = []
+    annotated = result.plot(
+        boxes=True,
+        masks=True,
+        labels=True,
+        conf=True
+    )
+
+    detections: List[Dict[str, Any]] = []
 
     names = result.names
 
-    if result.boxes is not None:
+    # ========================================================
+    # INSTANCE SEGMENTATION
+    # ========================================================
 
-        for box in result.boxes:
+    if result.boxes is None:
+        return annotated, detections
 
-            class_id = int(
-                box.cls[0].item()
+    masks = result.masks
+
+    for index, box in enumerate(result.boxes):
+
+        class_id = int(
+            box.cls[0].item()
+        )
+
+        conf = float(
+            box.conf[0].item()
+        )
+
+        bbox = [
+            float(value)
+            for value
+            in box.xyxy[0].tolist()
+        ]
+
+        class_name = str(
+            names[class_id]
+        )
+
+        centroid = calculate_centroid(
+            bbox
+        )
+
+        mask_area = None
+
+        polygon = None
+
+        if masks is not None:
+
+            # Binary mask for this individual object
+            mask = masks.data[index]
+
+            mask = (
+                mask
+                .detach()
+                .cpu()
+                .numpy()
             )
 
-            conf = float(
-                box.conf[0].item()
+            mask = (
+                mask > 0.5
+            ).astype(np.uint8)
+
+            mask_area = calculate_mask_area(
+                mask
             )
 
-            xyxy = [
-                float(value)
-                for value
-                in box.xyxy[0].tolist()
-            ]
+            # Polygon coordinates
+            if index < len(masks.xy):
 
-            detections.append(
+                polygon = (
+                    masks.xy[index]
+                    .tolist()
+                )
 
-                {
-                    "class_id":
-                        class_id,
+        detections.append({
 
-                    "class_name":
-                        str(
-                            names[class_id]
-                        ),
+            # Unique instance inside this frame
+            "instance_id":
+                index,
 
-                    "confidence":
-                        conf,
+            "class_id":
+                class_id,
 
-                    "bbox":
-                        xyxy,
-                }
-            )
+            "class_name":
+                class_name,
+
+            "confidence":
+                conf,
+
+            "bbox":
+                bbox,
+
+            "centroid":
+                centroid,
+
+            "mask_area":
+                mask_area,
+
+            "polygon":
+                polygon,
+
+        })
 
     return annotated, detections
+
+
+# ============================================================
+# CLASS COUNTS
+# ============================================================
+
+def count_by_class(
+    detections: List[Dict[str, Any]]
+) -> Dict[str, int]:
+
+    counts: Dict[str, int] = {}
+
+    for detection in detections:
+
+        class_name = detection[
+            "class_name"
+        ]
+
+        counts[class_name] = (
+            counts.get(class_name, 0)
+            + 1
+        )
+
+    return counts
+
+
+# ============================================================
+# OVERLAP ANALYSIS
+# ============================================================
+
+def calculate_bbox_iou(
+    box_a: List[float],
+    box_b: List[float]
+) -> float:
+
+    ax1, ay1, ax2, ay2 = box_a
+    bx1, by1, bx2, by2 = box_b
+
+    ix1 = max(ax1, bx1)
+    iy1 = max(ay1, by1)
+
+    ix2 = min(ax2, bx2)
+    iy2 = min(ay2, by2)
+
+    intersection_width = max(
+        0.0,
+        ix2 - ix1
+    )
+
+    intersection_height = max(
+        0.0,
+        iy2 - iy1
+    )
+
+    intersection = (
+        intersection_width
+        * intersection_height
+    )
+
+    area_a = (
+        max(0.0, ax2 - ax1)
+        *
+        max(0.0, ay2 - ay1)
+    )
+
+    area_b = (
+        max(0.0, bx2 - bx1)
+        *
+        max(0.0, by2 - by1)
+    )
+
+    union = (
+        area_a
+        + area_b
+        - intersection
+    )
+
+    if union <= 0:
+        return 0.0
+
+    return intersection / union
+
+
+def find_overlapping_objects(
+    detections: List[Dict[str, Any]],
+    threshold: float = 0.20
+) -> List[Dict[str, Any]]:
+
+    overlaps = []
+
+    for i in range(
+        len(detections)
+    ):
+
+        for j in range(
+            i + 1,
+            len(detections)
+        ):
+
+            first = detections[i]
+            second = detections[j]
+
+            iou = calculate_bbox_iou(
+                first["bbox"],
+                second["bbox"]
+            )
+
+            if iou >= threshold:
+
+                overlaps.append({
+
+                    "first_instance":
+                        first["instance_id"],
+
+                    "second_instance":
+                        second["instance_id"],
+
+                    "first_class":
+                        first["class_name"],
+
+                    "second_class":
+                        second["class_name"],
+
+                    "overlap":
+                        round(iou, 4),
+
+                })
+
+    return overlaps
 
 
 # ============================================================
@@ -399,9 +517,10 @@ def detect_objects(
 
 def process_image(
     image_bytes: bytes,
-    confidence: float = 0.35,
+    confidence: float = DEFAULT_CONFIDENCE,
+    iou: float = DEFAULT_IOU,
     profile: str | None = None,
-):
+) -> Dict[str, Any]:
 
     frame = decode_image(
         image_bytes
@@ -413,28 +532,17 @@ def process_image(
 
         confidence=confidence,
 
+        iou=iou,
+
         profile=profile,
     )
 
-    class_counts = {}
-
-    for detection in detections:
-
-        label = detection[
-            "class_name"
-        ]
-
-        class_counts[label] = (
-            class_counts.get(label, 0)
-            + 1
-        )
-
-    settings = get_profile_info(
-        profile
+    class_counts = count_by_class(
+        detections
     )
 
-    resolved = resolve_profile(
-        profile
+    overlaps = find_overlapping_objects(
+        detections
     )
 
     height, width = frame.shape[:2]
@@ -444,6 +552,73 @@ def process_image(
         "image":
             annotated,
 
+        # Every individual object
+        "detections":
+            detections,
+
+        # Total number of instances
+        "count":
+            len(detections),
+
+        # Example:
+        # {
+        #     "book": 27,
+        #     "bottle": 8,
+        #     "cap": 12
+        # }
+        "class_counts":
+            class_counts,
+
+        # Overlap information
+        "overlaps":
+            overlaps,
+
+        "overlap_count":
+            len(overlaps),
+
+        "model":
+            MODEL_PATH,
+
+        "device":
+            get_device(),
+
+        "imgsz":
+            (
+                GPU_IMGSZ
+                if cuda_available()
+                else CPU_IMGSZ
+            ),
+
+        "image_size":
+            (width, height),
+
+    }
+
+
+# ============================================================
+# VIDEO FRAME PROCESSING
+# ============================================================
+
+def process_frame(
+    frame: np.ndarray,
+    confidence: float = DEFAULT_CONFIDENCE,
+    iou: float = DEFAULT_IOU,
+) -> Dict[str, Any]:
+
+    annotated, detections = detect_objects(
+
+        frame,
+
+        confidence=confidence,
+
+        iou=iou,
+    )
+
+    return {
+
+        "frame":
+            annotated,
+
         "detections":
             detections,
 
@@ -451,133 +626,16 @@ def process_image(
             len(detections),
 
         "class_counts":
-            class_counts,
+            count_by_class(
+                detections
+            ),
 
-        "profile":
-            resolved,
+        "overlaps":
+            find_overlapping_objects(
+                detections
+            ),
 
-        "profile_label":
-            settings["label"],
-
-        "model":
-            settings["model"],
-
-        "device":
-            settings["device"],
-
-        "imgsz":
-            settings["imgsz"],
-
-        "image_size":
-            (width, height),
     }
-
-
-# ============================================================
-# PEOPLE DETECTION
-# ============================================================
-
-def detect_people(
-    frame: np.ndarray,
-    confidence: float = 0.35,
-    profile: str | None = None,
-):
-
-    if frame is None:
-
-        raise ValueError(
-            "Image frame is empty."
-        )
-
-    if not 0.0 < confidence < 1.0:
-
-        raise ValueError(
-            "Confidence must be between 0 and 1."
-        )
-
-    resolved = resolve_profile(
-        profile
-    )
-
-    settings = get_profile_info(
-        resolved
-    )
-
-    model = get_model(
-        resolved
-    )
-
-    predict_kwargs = {
-
-        "source": frame,
-
-        "conf": float(confidence),
-
-        "imgsz":
-            settings["imgsz"],
-
-        "device":
-            0
-            if resolved == "full_gpu"
-            else "cpu",
-
-        # COCO class 0 = person
-        "classes": [0],
-
-        "verbose": False,
-
-        "max_det": 300,
-    }
-
-    if resolved == "full_gpu":
-
-        predict_kwargs["half"] = True
-
-    results = model.predict(
-        **predict_kwargs
-    )
-
-    if not results:
-
-        return frame.copy(), []
-
-    result = results[0]
-
-    annotated = result.plot()
-
-    detections = []
-
-    if result.boxes is not None:
-
-        for box in result.boxes:
-
-            confidence_value = float(
-                box.conf[0].item()
-            )
-
-            xyxy = [
-                float(value)
-                for value
-                in box.xyxy[0].tolist()
-            ]
-
-            detections.append(
-
-                {
-                    "class_id": 0,
-
-                    "class_name":
-                        "person",
-
-                    "confidence":
-                        confidence_value,
-
-                    "bbox":
-                        xyxy,
-                }
-            )
-
-    return annotated, detections
 
 
 # ============================================================
@@ -586,19 +644,9 @@ def detect_people(
 
 __all__ = [
 
-    "MODEL_NAME",
-
-    "FULL_MODEL_NAME",
-
-    "LIGHT_MODEL_NAME",
-
     "cuda_available",
 
-    "resolve_profile",
-
-    "get_profile_info",
-
-    "get_available_profiles",
+    "get_device",
 
     "get_model",
 
@@ -606,7 +654,14 @@ __all__ = [
 
     "detect_objects",
 
-    "detect_people",
+    "count_by_class",
+
+    "find_overlapping_objects",
+
+    "calculate_bbox_iou",
 
     "process_image",
+
+    "process_frame",
+
 ]
