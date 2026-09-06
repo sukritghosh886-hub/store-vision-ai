@@ -171,6 +171,37 @@ PRODUCT_MODEL_ENV = os.getenv(
 )
 
 
+def load_products(self):
+    response = (
+        self.sb.table("products")
+        .select("id,name,category,sku")
+        .eq("user_id", self.camera["owner_id"])
+        .execute()
+    )
+
+    products = response.data or []
+
+    self.products_by_name = {
+        p["name"].strip().lower(): p
+        for p in products
+        if p.get("name")
+    }
+
+    return products
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # ============================================================
 # SUPABASE
 # ============================================================
