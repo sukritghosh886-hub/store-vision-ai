@@ -1,344 +1,503 @@
 """
 Store Vision AI
-Evidence Recorder
+Security Evidence Recorder
 
-Saves security evidence locally and uploads it to
-Supabase Storage.
+This module captures security evidence such as:
+    - JPEG snapshots
+    - MP4 video clips
 
-Evidence is associated with:
-    store
-    visit
-    camera
-    anonymous person_track_id
-    observed item
+It stores evidence locally and, when Supabase is configured,
+uploads it to the private `security-evidence` bucket.
 
-No facial recognition is performed.
+It also creates a corresponding row in:
+    public.security_evidence
+
+Important:
+    - No facial recognition is performed.
+    - People are identified only by anonymous person_track_id.
+    - Evidence is connected to store, visit, camera and observed item.
 """
 
 from __future__ import annotations
 
 import os
-import time
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 import cv2
 
-try:
-    from supabase import create_client
-except ImportError:
-    create_client = None
-
-
-DEFAULT_EVIDENCE_DIR = os.getenv(
-    "STORE_VISION_EVIDENCE_DIR",
-    "evidence",
-)
-
-DEFAULT_BUCKET = os.getenv(
-    "SUPABASE_EVIDENCE_BUCKET",
-    "security-evidence",
-)
-
 
 class EvidenceRecorder:
+    """
+    Records security evidence for Store Vision AI.
+
+    Supabase is optional.
+
+    If Supabase is unavailable, evidence is still saved locally.
+    """
 
     def __init__(
         self,
-        evidence_dir: str = DEFAULT_EVIDENCE_DIR,
-        supabase_client: Any = None,
-        bucket: str = DEFAULT_BUCKET,
+        supabase_client=None,
+        bucket_name: str = "security-evidence",
+        evidence_dir: str = "evidence",
     ):
-        self.root = Path(evidence_dir)
-        self.root.mkdir(
+        self.supabase = supabase_client
+        self.bucket_name = bucket_name
+        self.evidence_dir = Path(evidence_dir)
+
+        self.evidence_dir.mkdir(
             parents=True,
             exist_ok=True,
         )
 
-        self.bucket = bucket
-        self.supabase = supabase_client
-
-        if self.supabase is None:
-            self.supabase = self._create_supabase_client()
-
-    # ========================================================
+    # ============================================================
     # SUPABASE CLIENT
-    # ========================================================
+    # ============================================================
 
     def _create_supabase_client(self):
-        if create_client is None:
-            return None
+        """
+        Create a Supabase client only when one was not supplied.
+        """
 
-        url = os.getenv("SUPABASE_URL")
-
-        # The camera/security pipeline should normally use
-        # the service-role key because evidence is server-side.
-        key = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
-
-        if not key:
-            key = os.getenv("SUPABASE_KEY")
-
-        if not key:
-            key = os.getenv("SUPABASE_PUBLISHABLE_KEY")
-
-        if not url or not key:
-            return None
+        if self.supabase is not None:
+            return self.supabase
 
         try:
-            return create_client(url, key)
-        except Exception:
+            from supabase import create_client
+
+            supabase_url = os.getenv("SUPABASE_URL")
+
+            supabase_key = (
+                os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+                or os.getenv("SUPABASE_KEY")
+                or os.getenv("SUPABASE_PUBLISHABLE_KEY")
+            )
+
+            if not supabase_url or not supabase_key:
+                return None
+
+            self.supabase = create_client(
+                supabase_url,
+                supabase_key,
+            )
+
+            return self.supabase
+
+        except Exception as exc:
+            print(
+                "[EVIDENCE] Could not create Supabase client:",
+                exc,
+            )
             return None
 
-    # ========================================================
+    # ============================================================
+    # TIME
+    # ============================================================
+
+    @staticmethod
+    def _now_iso() -> str:
+        """
+        Return current UTC timestamp in ISO format.
+        """
+
+        return datetime.now(
+            timezone.utc
+        ).isoformat()
+
+    # ============================================================
+    # SAFE PATH
+    # ============================================================
+
+    @staticmethod
+    def _safe_component(value: Optional[str]) -> str:
+        """
+        Make a value safe for a storage path.
+        """
+
+        if value is None:
+            return "unknown"
+
+        value = str(value).strip()
+
+        if not value:
+            return "unknown"
+
+        allowed = (
+            "abcdefghijklmnopqrstuvwxyz"
+            "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+            "0123456789"
+            "-_."
+        )
+
+        return "".join(
+            character
+            if character in allowed
+            else "_"
+            for character in value
+        )
+
+    # ============================================================
     # SNAPSHOT
-    # ========================================================
+    # ============================================================
 
     def save_snapshot(
         self,
         frame,
         store_id: str,
-        visit_id: Optional[str],
-        person_track_id: Optional[str],
-        event_type: str,
+        visit_id: Optional[str] = None,
+        person_track_id: Optional[str] = None,
         observed_item_id: Optional[str] = None,
         camera_id: Optional[str] = None,
-        metadata: Optional[dict] = None,
-    ) -> str:
+        owner_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        """
+        Save a JPEG security snapshot.
 
-        timestamp = int(time.time())
-        unique_id = uuid.uuid4().hex[:10]
+        Returns:
+            Supabase storage path when upload succeeds,
+            local path when Supabase is unavailable,
+            None when saving fails.
+        """
+
+        if frame is None:
+            print("[EVIDENCE] Snapshot frame is empty.")
+            return None
+
+        timestamp = datetime.now(
+            timezone.utc
+        ).strftime("%Y%m%dT%H%M%S%fZ")
+
+        unique_id = uuid.uuid4().hex
 
         filename = (
+            f"security_snapshot_"
             f"{timestamp}_"
-            f"{event_type}_"
             f"{unique_id}.jpg"
         )
 
-        directory = self.root / str(store_id)
-
-        directory.mkdir(
-            parents=True,
-            exist_ok=True,
+        local_path = (
+            self.evidence_dir /
+            filename
         )
 
-        local_path = directory / filename
-
-        success = cv2.imwrite(
-            str(local_path),
-            frame,
-        )
-
-        if not success:
-            raise RuntimeError(
-                "Could not save evidence snapshot."
+        try:
+            success = cv2.imwrite(
+                str(local_path),
+                frame,
             )
 
-        storage_path = self._build_storage_path(
-            store_id=store_id,
-            filename=filename,
+            if not success:
+                print(
+                    "[EVIDENCE] Failed to save snapshot:",
+                    local_path,
+                )
+                return None
+
+        except Exception as exc:
+            print(
+                "[EVIDENCE] Snapshot save error:",
+                exc,
+            )
+            return None
+
+        # --------------------------------------------------------
+        # Metadata
+        # --------------------------------------------------------
+
+        evidence_metadata = dict(
+            metadata or {}
         )
 
-        self._upload_file(
+        evidence_metadata.update({
+            "anonymous_tracking": True,
+            "captured_at": self._now_iso(),
+            "local_path": str(local_path),
+        })
+
+        # --------------------------------------------------------
+        # Upload
+        # --------------------------------------------------------
+
+        storage_path = self._upload_file(
             local_path=local_path,
-            storage_path=storage_path,
+            store_id=store_id,
+            filename=filename,
             content_type="image/jpeg",
         )
 
-        self._insert_evidence_record(
-            store_id=store_id,
-            visit_id=visit_id,
-            observed_item_id=observed_item_id,
-            camera_id=camera_id,
-            person_track_id=person_track_id,
-            evidence_type="snapshot",
-            storage_path=storage_path,
-            metadata={
-                "event_type": event_type,
-                **(metadata or {}),
-            },
+        # --------------------------------------------------------
+        # Database record
+        # --------------------------------------------------------
+
+        if storage_path:
+
+            record_created = (
+                self._insert_evidence_record(
+                    owner_id=owner_id,
+                    store_id=store_id,
+                    visit_id=visit_id,
+                    observed_item_id=observed_item_id,
+                    camera_id=camera_id,
+                    person_track_id=person_track_id,
+                    evidence_type="snapshot",
+                    storage_path=storage_path,
+                    captured_at=self._now_iso(),
+                    metadata=evidence_metadata,
+                )
+            )
+
+            if record_created:
+                return storage_path
+
+        # --------------------------------------------------------
+        # Local fallback
+        # --------------------------------------------------------
+
+        print(
+            "[EVIDENCE] Snapshot saved locally:",
+            str(local_path),
         )
 
-        return storage_path
+        return str(local_path)
 
-    # ========================================================
-    # SHORT VIDEO CLIP
-    # ========================================================
+    # ============================================================
+    # VIDEO CLIP
+    # ============================================================
 
     def save_video_clip(
         self,
         frames,
         fps: float,
-        frame_size,
         store_id: str,
-        event_type: str,
         visit_id: Optional[str] = None,
         person_track_id: Optional[str] = None,
         observed_item_id: Optional[str] = None,
         camera_id: Optional[str] = None,
-        metadata: Optional[dict] = None,
-    ) -> str:
+        owner_id: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        """
+        Save an MP4 security video clip.
 
-        timestamp = int(time.time())
-        unique_id = uuid.uuid4().hex[:10]
+        `frames` should contain OpenCV BGR frames.
+        """
+
+        if not frames:
+            print("[EVIDENCE] No video frames supplied.")
+            return None
+
+        if fps is None or fps <= 0:
+            fps = 20.0
+
+        first_frame = frames[0]
+
+        if first_frame is None:
+            print("[EVIDENCE] First video frame is empty.")
+            return None
+
+        height, width = first_frame.shape[:2]
+
+        timestamp = datetime.now(
+            timezone.utc
+        ).strftime("%Y%m%dT%H%M%S%fZ")
+
+        unique_id = uuid.uuid4().hex
 
         filename = (
+            f"security_clip_"
             f"{timestamp}_"
-            f"{event_type}_"
             f"{unique_id}.mp4"
         )
 
-        directory = self.root / str(store_id)
-
-        directory.mkdir(
-            parents=True,
-            exist_ok=True,
+        local_path = (
+            self.evidence_dir /
+            filename
         )
 
-        local_path = directory / filename
-
-        width, height = frame_size
-
-        if fps is None or fps <= 0:
-            fps = 15.0
-
-        writer = cv2.VideoWriter(
-            str(local_path),
-            cv2.VideoWriter_fourcc(*"mp4v"),
-            float(fps),
-            (int(width), int(height)),
-        )
-
-        if not writer.isOpened():
-            raise RuntimeError(
-                "Could not create evidence video."
-            )
-
-        frame_count = 0
+        writer = None
 
         try:
+            writer = cv2.VideoWriter(
+                str(local_path),
+                cv2.VideoWriter_fourcc(
+                    *"mp4v"
+                ),
+                float(fps),
+                (width, height),
+            )
+
+            if not writer.isOpened():
+                print(
+                    "[EVIDENCE] Could not open video writer."
+                )
+                return None
+
             for frame in frames:
+
                 if frame is None:
                     continue
 
+                if (
+                    frame.shape[1] != width
+                    or frame.shape[0] != height
+                ):
+                    frame = cv2.resize(
+                        frame,
+                        (width, height),
+                    )
+
                 writer.write(frame)
-                frame_count += 1
 
-        finally:
-            writer.release()
+        except Exception as exc:
 
-        if frame_count == 0:
-            raise RuntimeError(
-                "No frames were available for evidence video."
+            print(
+                "[EVIDENCE] Video creation error:",
+                exc,
             )
 
-        storage_path = self._build_storage_path(
-            store_id=store_id,
-            filename=filename,
+            return None
+
+        finally:
+
+            if writer is not None:
+                writer.release()
+
+        evidence_metadata = dict(
+            metadata or {}
         )
 
-        self._upload_file(
+        evidence_metadata.update({
+            "anonymous_tracking": True,
+            "captured_at": self._now_iso(),
+            "local_path": str(local_path),
+            "fps": float(fps),
+            "frame_count": len(frames),
+        })
+
+        storage_path = self._upload_file(
             local_path=local_path,
-            storage_path=storage_path,
+            store_id=store_id,
+            filename=filename,
             content_type="video/mp4",
         )
 
-        self._insert_evidence_record(
-            store_id=store_id,
-            visit_id=visit_id,
-            observed_item_id=observed_item_id,
-            camera_id=camera_id,
-            person_track_id=person_track_id,
-            evidence_type="video_clip",
-            storage_path=storage_path,
-            metadata={
-                "event_type": event_type,
-                "fps": float(fps),
-                "frame_count": frame_count,
-                "frame_width": int(width),
-                "frame_height": int(height),
-                **(metadata or {}),
-            },
+        if storage_path:
+
+            record_created = (
+                self._insert_evidence_record(
+                    owner_id=owner_id,
+                    store_id=store_id,
+                    visit_id=visit_id,
+                    observed_item_id=observed_item_id,
+                    camera_id=camera_id,
+                    person_track_id=person_track_id,
+                    evidence_type="video_clip",
+                    storage_path=storage_path,
+                    captured_at=self._now_iso(),
+                    metadata=evidence_metadata,
+                )
+            )
+
+            if record_created:
+                return storage_path
+
+        print(
+            "[EVIDENCE] Video saved locally:",
+            str(local_path),
         )
 
-        return storage_path
+        return str(local_path)
 
-    # ========================================================
-    # STORAGE PATH
-    # ========================================================
-
-    def _build_storage_path(
-        self,
-        store_id: str,
-        filename: str,
-    ) -> str:
-
-        # Important:
-        # The first path segment is the store UUID.
-        #
-        # This matches the Storage RLS policy that restricts
-        # users to evidence belonging to their own store.
-
-        return (
-            f"{store_id}/"
-            f"{filename}"
-        )
-
-    # ========================================================
+    # ============================================================
     # UPLOAD
-    # ========================================================
+    # ============================================================
 
     def _upload_file(
         self,
         local_path: Path,
-        storage_path: str,
+        store_id: str,
+        filename: str,
         content_type: str,
-    ) -> bool:
+    ) -> Optional[str]:
+        """
+        Upload evidence to the private Supabase bucket.
 
-        if self.supabase is None:
-            # Local-only mode is intentionally supported.
-            # This allows offline/local deployments.
-            return False
+        Storage structure:
+
+            security-evidence/
+                <store_id>/
+                    <filename>
+        """
+
+        sb = self._create_supabase_client()
+
+        if sb is None:
+            print(
+                "[EVIDENCE] Supabase unavailable. "
+                "Using local evidence."
+            )
+            return None
+
+        safe_store_id = self._safe_component(
+            store_id
+        )
+
+        safe_filename = self._safe_component(
+            filename
+        )
+
+        storage_path = (
+            f"{safe_store_id}/"
+            f"{safe_filename}"
+        )
 
         try:
 
             with open(
                 local_path,
                 "rb",
-            ) as file_handle:
+            ) as file:
 
-                file_bytes = file_handle.read()
+                file_bytes = file.read()
 
-            self.supabase.storage \
-                .from_(self.bucket) \
-                .upload(
-                    storage_path,
-                    file_bytes,
-                    {
-                        "content-type": content_type,
-                        "upsert": "false",
-                    },
-                )
+            sb.storage.from_(
+                self.bucket_name
+            ).upload(
+                storage_path,
+                file_bytes,
+                {
+                    "content-type": content_type,
+                    "upsert": "false",
+                },
+            )
 
-            return True
+            print(
+                "[EVIDENCE] Uploaded:",
+                storage_path,
+            )
+
+            return storage_path
 
         except Exception as exc:
 
-            # Do not crash the camera pipeline merely because
-            # cloud storage is temporarily unavailable.
             print(
-                "Evidence upload failed:",
+                "[EVIDENCE] Upload failed:",
                 exc,
             )
 
-            return False
+            return None
 
-    # ========================================================
+    # ============================================================
     # DATABASE RECORD
-    # ========================================================
+    # ============================================================
 
     def _insert_evidence_record(
         self,
+        owner_id: Optional[str],
         store_id: str,
         visit_id: Optional[str],
         observed_item_id: Optional[str],
@@ -346,118 +505,170 @@ class EvidenceRecorder:
         person_track_id: Optional[str],
         evidence_type: str,
         storage_path: str,
-        metadata: Optional[dict] = None,
-    ) -> Optional[dict]:
+        captured_at: str,
+        metadata: Dict[str, Any],
+    ) -> bool:
+        """
+        Insert evidence metadata into:
 
-        if self.supabase is None:
-            return None
+            public.security_evidence
+
+        owner_id is required by the current Supabase schema.
+        """
+
+        sb = self._create_supabase_client()
+
+        if sb is None:
+            return False
+
+        if not owner_id:
+            print(
+                "[EVIDENCE] owner_id is required "
+                "for security_evidence."
+            )
+            return False
 
         payload = {
+            "owner_id": str(owner_id),
             "store_id": str(store_id),
-            "visit_id": (
-                str(visit_id)
-                if visit_id
-                else None
-            ),
-            "observed_item_id": (
-                str(observed_item_id)
-                if observed_item_id
-                else None
-            ),
-            "camera_id": (
-                str(camera_id)
-                if camera_id
-                else None
-            ),
-            "person_track_id": (
-                str(person_track_id)
-                if person_track_id is not None
-                else None
-            ),
-            "evidence_type": evidence_type,
-            "storage_path": storage_path,
+            "evidence_type": str(evidence_type),
+            "storage_path": str(storage_path),
+            "captured_at": captured_at,
             "metadata": metadata or {},
         }
 
+        if visit_id:
+            payload["visit_id"] = str(
+                visit_id
+            )
+
+        if observed_item_id:
+            payload["observed_item_id"] = str(
+                observed_item_id
+            )
+
+        if camera_id:
+            payload["camera_id"] = str(
+                camera_id
+            )
+
+        if person_track_id:
+            payload["person_track_id"] = str(
+                person_track_id
+            )
+
         try:
 
-            response = (
-                self.supabase
-                .table("security_evidence")
+            result = (
+                sb.table(
+                    "security_evidence"
+                )
                 .insert(payload)
                 .execute()
             )
 
-            if response.data:
-                return response.data[0]
+            if getattr(
+                result,
+                "data",
+                None,
+            ):
 
-            return None
+                print(
+                    "[EVIDENCE] Database record created."
+                )
+
+                return True
+
+            print(
+                "[EVIDENCE] Database insert returned no data."
+            )
+
+            return False
 
         except Exception as exc:
 
             print(
-                "Could not create security_evidence "
-                "database record:",
+                "[EVIDENCE] Database insert failed:",
                 exc,
             )
 
-            return None
+            return False
 
-    # ========================================================
-    # SNAPSHOT + DATABASE RECORD WITHOUT UPLOAD
-    # ========================================================
+    # ============================================================
+    # EVENT FRAME HELPER
+    # ============================================================
 
     def record_event_frame(
         self,
         frame,
         store_id: str,
-        visit_id: Optional[str],
-        person_track_id: Optional[str],
-        event_type: str,
+        owner_id: Optional[str] = None,
+        visit_id: Optional[str] = None,
+        person_track_id: Optional[str] = None,
         observed_item_id: Optional[str] = None,
         camera_id: Optional[str] = None,
-        metadata: Optional[dict] = None,
-    ) -> str:
+        event_type: str = "security_event",
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        """
+        Convenience method for recording an event frame.
+        """
+
+        event_metadata = dict(
+            metadata or {}
+        )
+
+        event_metadata.setdefault(
+            "event_type",
+            event_type,
+        )
 
         return self.save_snapshot(
             frame=frame,
             store_id=store_id,
+            owner_id=owner_id,
             visit_id=visit_id,
             person_track_id=person_track_id,
-            event_type=event_type,
             observed_item_id=observed_item_id,
             camera_id=camera_id,
-            metadata=metadata,
+            metadata=event_metadata,
         )
 
-    # ========================================================
-    # STORAGE URL
-    # ========================================================
+    # ============================================================
+    # SIGNED URL
+    # ============================================================
 
     def create_signed_url(
         self,
         storage_path: str,
         expires_in: int = 3600,
     ) -> Optional[str]:
+        """
+        Create a temporary signed URL for private evidence.
+        """
 
-        if self.supabase is None:
+        sb = self._create_supabase_client()
+
+        if sb is None:
             return None
 
         try:
 
-            response = (
-                self.supabase
-                .storage
-                .from_(self.bucket)
+            result = (
+                sb.storage
+                .from_(self.bucket_name)
                 .create_signed_url(
                     storage_path,
                     expires_in,
                 )
             )
 
-            if isinstance(response, dict):
-                return response.get("signedURL") or response.get(
-                    "signedUrl"
+            if isinstance(result, dict):
+
+                return (
+                    result.get("signedURL")
+                    or result.get("signedUrl")
+                    or result.get("signed_url")
                 )
 
             return None
@@ -465,13 +676,34 @@ class EvidenceRecorder:
         except Exception as exc:
 
             print(
-                "Could not create evidence signed URL:",
+                "[EVIDENCE] Signed URL error:",
                 exc,
             )
 
             return None
 
 
-__all__ = [
-    "EvidenceRecorder",
-]
+# ================================================================
+# SIMPLE LOCAL TEST
+# ================================================================
+
+if __name__ == "__main__":
+
+    print(
+        "Store Vision AI EvidenceRecorder"
+    )
+
+    print(
+        "Bucket:",
+        "security-evidence",
+    )
+
+    print(
+        "Local directory:",
+        "evidence",
+    )
+
+    print(
+        "No camera or facial recognition is started "
+        "by this test."
+    )
