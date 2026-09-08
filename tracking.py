@@ -1,37 +1,60 @@
 from __future__ import annotations
 
 import math
+from typing import Dict, List, Tuple
 
 
 class CentroidTracker:
+    """
+    CPU-friendly anonymous person tracker.
+
+    This does NOT perform facial recognition.
+    Each person receives a temporary anonymous ID.
+    """
 
     def __init__(
         self,
-        max_distance: float = 80,
+        max_distance: float = 100.0,
+        max_missing: int = 20,
     ):
-
-        self.max_distance = max_distance
+        self.max_distance = float(max_distance)
+        self.max_missing = int(max_missing)
 
         self.next_id = 1
 
-        self.objects = {}
+        self.objects: Dict[
+            int,
+            Tuple[float, float]
+        ] = {}
+
+        self.missing: Dict[int, int] = {}
 
     @staticmethod
-    def center(bbox):
+    def center(
+        bbox: List[float],
+    ) -> Tuple[float, float]:
 
         x1, y1, x2, y2 = bbox
 
         return (
-            (x1 + x2) // 2,
-            (y1 + y2) // 2,
+            (x1 + x2) / 2.0,
+            (y1 + y2) / 2.0,
         )
 
-    def update(self, detections):
+    def update(
+        self,
+        detections: List[dict],
+    ) -> Dict[int, Tuple[float, float]]:
 
         people = [
             detection
             for detection in detections
-            if detection["label"] == "person"
+            if str(
+                detection.get(
+                    "class_name",
+                    detection.get("label", ""),
+                )
+            ).lower() == "person"
         ]
 
         centers = [
@@ -41,46 +64,156 @@ class CentroidTracker:
             for detection in people
         ]
 
-        updated = {}
+        # No people detected in this frame.
+        if not centers:
 
-        used_ids = set()
+            for object_id in list(
+                self.missing
+            ):
+                self.missing[object_id] += 1
 
-        for center in centers:
+                if (
+                    self.missing[object_id]
+                    > self.max_missing
+                ):
+                    self.objects.pop(
+                        object_id,
+                        None,
+                    )
 
-            best_id = None
+                    self.missing.pop(
+                        object_id,
+                        None,
+                    )
 
-            best_distance = (
-                self.max_distance
-            )
+            return dict(self.objects)
+
+        old_items = list(
+            self.objects.items()
+        )
+
+        candidates = []
+
+        for new_index, center in enumerate(
+            centers
+        ):
 
             for object_id, old_center in (
-                self.objects.items()
+                old_items
             ):
-
-                if object_id in used_ids:
-                    continue
 
                 distance = math.dist(
                     center,
                     old_center,
                 )
 
-                if distance < best_distance:
+                if (
+                    distance
+                    <= self.max_distance
+                ):
 
-                    best_distance = distance
+                    candidates.append(
+                        (
+                            distance,
+                            new_index,
+                            object_id,
+                        )
+                    )
 
-                    best_id = object_id
+        # Closest matches first.
+        candidates.sort(
+            key=lambda item: item[0]
+        )
 
-            if best_id is None:
+        assigned_new = set()
+        assigned_ids = set()
 
-                best_id = self.next_id
+        updated: Dict[
+            int,
+            Tuple[float, float]
+        ] = {}
 
-                self.next_id += 1
+        for (
+            _,
+            new_index,
+            object_id,
+        ) in candidates:
 
-            updated[best_id] = center
+            if new_index in assigned_new:
+                continue
 
-            used_ids.add(best_id)
+            if object_id in assigned_ids:
+                continue
+
+            updated[object_id] = (
+                centers[new_index]
+            )
+
+            assigned_new.add(
+                new_index
+            )
+
+            assigned_ids.add(
+                object_id
+            )
+
+        # Create anonymous IDs for new people.
+        for new_index, center in enumerate(
+            centers
+        ):
+
+            if new_index in assigned_new:
+                continue
+
+            object_id = self.next_id
+
+            self.next_id += 1
+
+            updated[object_id] = center
+
+        # Update missing counters.
+        for object_id in list(
+            self.objects
+        ):
+
+            if object_id not in updated:
+
+                self.missing[object_id] = (
+                    self.missing.get(
+                        object_id,
+                        0,
+                    ) + 1
+                )
+
+            else:
+
+                self.missing[object_id] = 0
+
+        # Remove stale tracks.
+        for object_id in list(
+            self.missing
+        ):
+
+            if (
+                self.missing[object_id]
+                > self.max_missing
+            ):
+
+                self.missing.pop(
+                    object_id,
+                    None,
+                )
+
+                self.objects.pop(
+                    object_id,
+                    None,
+                )
+
+                updated.pop(
+                    object_id,
+                    None,
+                )
 
         self.objects = updated
 
-        return self.objects
+        return dict(self.objects)
