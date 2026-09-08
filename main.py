@@ -9,7 +9,8 @@ from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
 import store_events
-from vision_pipeline import process_video
+
+from video_pipeline import process_video
 
 
 app = FastAPI(
@@ -581,12 +582,20 @@ async def analyze_video(
             frame_stride=frame_stride,
         )
 
-        for frame, message in pipeline:
+        for result in pipeline:
 
-            processed_frames += 1
+    processed_frames += 1
 
-            if message:
-                messages.append(message)
+    message = result.get(
+        "message"
+    )
+
+    if message:
+        messages.append(
+            message
+        )
+
+
 
         alerts = store_events.get_open_alerts(
             store_id=store_id
