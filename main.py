@@ -1,208 +1,187 @@
-"""
-Store Vision AI - FastAPI backend
-
-This file provides:
-- Health check
-- Video analysis
-- Visit/item/billing APIs
-- Security alert APIs
-
-The existing vision pipeline is preserved.
-"""
-
-from __future__ import annotations
-
 import os
 import tempfile
-from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any
 
+import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.middleware.cors import CORSMiddleware
 
-from video_pipeline import VideoPipeline
+from video_pipeline import process_video
 
-
-# ---------------------------------------------------------------------
-# App configuration
-# ---------------------------------------------------------------------
 
 app = FastAPI(
-    title="Store Vision AI",
-    description="AI-powered retail vision, visitor tracking and security backend",
+    title="Store Vision AI API",
     version="1.0.0",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-# ---------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------
-
-def get_pipeline() -> VideoPipeline:
-    """
-    Create the existing Store Vision AI pipeline.
-
-    The pipeline itself decides the appropriate inference configuration.
-    """
-    try:
-        return VideoPipeline()
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Could not initialize vision pipeline: {exc}",
-        )
-
-
-# ---------------------------------------------------------------------
-# Health
-# ---------------------------------------------------------------------
 
 @app.get("/")
-def root() -> Dict[str, Any]:
+def root():
     return {
-        "app": "Store Vision AI",
         "status": "online",
-        "service": "FastAPI",
+        "service": "Store Vision AI API",
+        "version": "1.0.0",
     }
 
 
 @app.get("/health")
-def health() -> Dict[str, Any]:
+def health():
     return {
         "status": "healthy",
-        "app": "Store Vision AI",
     }
 
 
-# ---------------------------------------------------------------------
-# Video analysis
-# ---------------------------------------------------------------------
-
-@app.post("/analyze/video")
-async def analyze_video(
-    file: UploadFile = File(...),
-) -> Dict[str, Any]:
-    """
-    Analyze an uploaded video using the existing Store Vision AI pipeline.
-    """
-
-    if not file.filename:
-        raise HTTPException(
-            status_code=400,
-            detail="No filename supplied.",
-        )
-
-    suffix = Path(file.filename).suffix.lower()
-
-    allowed_extensions = {
-        ".mp4",
-        ".avi",
-        ".mov",
-        ".mkv",
-        ".webm",
-        ".m4v",
+@app.get("/stores")
+def stores():
+    return {
+        "status": "ok",
+        "message": "Store endpoint is available",
     }
 
-    if suffix not in allowed_extensions:
+
+@app.get("/alerts")
+def alerts():
+    return {
+        "status": "ok",
+        "alerts": [],
+    }
+
+
+@app.post("/process-video")
+async def process_uploaded_video(
+    video: UploadFile = File(...),
+    store_id: str | None = None,
+):
+    """
+    Process an uploaded store/CCTV video.
+
+    store_id can be supplied as:
+        /process-video?store_id=YOUR_STORE_ID
+
+    or through the STORE_ID environment variable.
+    """
+
+    resolved_store_id = (
+        store_id
+        or os.getenv("STORE_ID")
+        or os.getenv("DEFAULT_STORE_ID")
+    )
+
+    if not resolved_store_id:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"Unsupported video format: {suffix}. "
-                f"Supported formats: {sorted(allowed_extensions)}"
+                "store_id is required. "
+                "Provide ?store_id=... or configure STORE_ID."
             ),
         )
 
-    temp_path: Optional[str] = None
+    if not video.filename:
+        raise HTTPException(
+            status_code=400,
+            detail="No video file was provided.",
+        )
+
+    suffix = os.path.splitext(video.filename)[1] or ".mp4"
+    temp_path = None
+
+    processed_frames = 0
+    detections = 0
+    people_detected = 0
+    items_detected = 0
+    exits = 0
+    alerts_found = 0
+
+    unique_people_tracks: set[Any] = set()
+    unique_item_tracks: set[Any] = set()
 
     try:
-        # Save uploaded video to a temporary file.
+        video_bytes = await video.read()
+
+        if not video_bytes:
+            raise HTTPException(
+                status_code=400,
+                detail="Uploaded video is empty.",
+            )
+
         with tempfile.NamedTemporaryFile(
             delete=False,
             suffix=suffix,
         ) as temp_file:
-
+            temp_file.write(video_bytes)
             temp_path = temp_file.name
 
-            while True:
-                chunk = await file.read(1024 * 1024)
-
-                if not chunk:
-                    break
-
-                temp_file.write(chunk)
-
-        pipeline = get_pipeline()
-
-        processed_frames = 0
-        detections = 0
-        people_detected = 0
-        items_detected = 0
-        alerts = 0
-
-        # -------------------------------------------------------------
-        # IMPORTANT:
-        # The pipeline yields frame-level results.
-        # We aggregate them here instead of breaking the iteration.
-        # -------------------------------------------------------------
-
-        for result in pipeline.process_video(temp_path):
+        for result in process_video(
+            temp_path,
+            store_id=resolved_store_id,
+        ):
+            if not isinstance(result, dict):
+                continue
 
             processed_frames += 1
 
-            if result is None:
-                continue
+            frame_detections = result.get("detections", [])
 
-            # Support dictionary-style pipeline results.
-            if isinstance(result, dict):
+            if isinstance(frame_detections, list):
+                detections += len(frame_detections)
 
-                frame_detections = result.get(
-                    "detections",
-                    result.get("objects", []),
-                )
+            people = result.get("people", [])
+            if isinstance(people, list):
+                people_detected += len(people)
 
-                if isinstance(frame_detections, list):
-                    detections += len(frame_detections)
+                for person in people:
+                    if not isinstance(person, dict):
+                        continue
 
-                people = result.get(
-                    "people",
-                    result.get("person_count", 0),
-                )
+                    track_id = (
+                        person.get("track_id")
+                        or person.get("id")
+                        or person.get("person_id")
+                    )
 
-                items = result.get(
-                    "items",
-                    result.get("item_count", 0),
-                )
+                    if track_id is not None:
+                        unique_people_tracks.add(str(track_id))
 
-                frame_alerts = result.get(
-                    "alerts",
-                    result.get("alert_count", 0),
-                )
+            items = result.get("items", [])
+            if isinstance(items, list):
+                items_detected += len(items)
 
-                if isinstance(people, int):
-                    people_detected += people
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
 
-                if isinstance(items, int):
-                    items_detected += items
+                    track_id = (
+                        item.get("track_id")
+                        or item.get("id")
+                        or item.get("item_id")
+                    )
 
-                if isinstance(frame_alerts, int):
-                    alerts += frame_alerts
+                    if track_id is not None:
+                        unique_item_tracks.add(str(track_id))
+
+            frame_exits = result.get("exits", [])
+            if isinstance(frame_exits, list):
+                exits += len(frame_exits)
+            elif frame_exits:
+                exits += 1
+
+            frame_alerts = result.get("alerts", [])
+            if isinstance(frame_alerts, list):
+                alerts_found += len(frame_alerts)
+            elif frame_alerts:
+                alerts_found += 1
 
         return {
-            "status": "completed",
-            "filename": file.filename,
+            "status": "success",
+            "store_id": resolved_store_id,
+            "filename": video.filename,
             "processed_frames": processed_frames,
             "detections": detections,
             "people_detected": people_detected,
+            "unique_people_tracks": len(unique_people_tracks),
             "items_detected": items_detected,
-            "alerts": alerts,
+            "unique_item_tracks": len(unique_item_tracks),
+            "exits": exits,
+            "alerts": alerts_found,
         }
 
     except HTTPException:
@@ -211,58 +190,22 @@ async def analyze_video(
     except Exception as exc:
         raise HTTPException(
             status_code=500,
-            detail=f"Video analysis failed: {exc}",
-        )
+            detail=f"Video processing failed: {type(exc).__name__}: {exc}",
+        ) from exc
 
     finally:
-        if temp_path:
+        if temp_path and os.path.exists(temp_path):
             try:
                 os.remove(temp_path)
             except OSError:
                 pass
 
 
-# ---------------------------------------------------------------------
-# Optional compatibility endpoints
-# ---------------------------------------------------------------------
-
-@app.get("/stores")
-def stores() -> Dict[str, Any]:
-    """
-    Compatibility endpoint.
-
-    Store CRUD will be connected to the authenticated Supabase
-    architecture in the next phase.
-    """
-    return {
-        "status": "ready",
-        "message": "Store API is available. Authentication/database integration is next.",
-    }
-
-
-@app.get("/alerts")
-def alerts() -> Dict[str, Any]:
-    """
-    Compatibility endpoint.
-
-    Security alerts will be loaded from Supabase in the next phase.
-    """
-    return {
-        "status": "ready",
-        "alerts": [],
-    }
-
-
-# ---------------------------------------------------------------------
-# Local development
-# ---------------------------------------------------------------------
-
 if __name__ == "__main__":
-    import uvicorn
+    port = int(os.getenv("PORT", "8008"))
 
     uvicorn.run(
-        "main:app",
+        app,
         host="0.0.0.0",
-        port=int(os.getenv("PORT", "8000")),
-        reload=False,
+        port=port,
     )
