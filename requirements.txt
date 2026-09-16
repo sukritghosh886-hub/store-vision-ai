@@ -1,17 +1,19 @@
-streamlit
-fastapi
-uvicorn[standard]
+streamlit==1.64.0
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
 
-supabase
-python-dotenv
+supabase==2.31.0
+python-dotenv==1.2.3
 
-opencv-python-headless
-numpy
-pandas
-Pillow
+opencv-python==5.0.0.93
+numpy==2.3.4
+pandas==3.0.5
+Pillow==12.3.0
 
-ultralytics
-supervision
+ultralytics==8.4.153
+supervision==0.30.3
 
-torch
-torchvision
+# CPU-only Railway runtime
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.10.0+cpu
+torchvision==0.25.0+cpu
