@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+
+training_data.csv
+store_vision_theft_model.joblib
+
+.venv/
+venv/
+env/
+
+.ipynb_checkpoints/
