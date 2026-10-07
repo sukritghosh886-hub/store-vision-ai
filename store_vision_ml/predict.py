@@ -1,86 +1,72 @@
-"""
-Store Vision AI
-Machine Learning Prediction Module
-
-Connects CustomerSession data from the feature adapter
-to the trained Random Forest model.
-"""
-
-from pathlib import Path
-
+import os
 import joblib
 import pandas as pd
 
-from feature_adapter import CustomerSession, create_ml_features
+from feature_adapter import (
+    FEATURE_COLUMNS
+)
 
 
-BASE_DIR = Path(__file__).resolve().parent
-
-MODEL_FILE = BASE_DIR / "store_vision_theft_model.joblib"
+MODEL_FILE = os.path.join(
+    os.path.dirname(__file__),
+    "store_vision_ml_model.joblib"
+)
 
 
 def load_model():
 
-    if not MODEL_FILE.exists():
+    if not os.path.exists(MODEL_FILE):
+
         raise FileNotFoundError(
-            "store_vision_theft_model.joblib was not found. "
-            "Run generate_dataset.py and train_model.py first."
+            "ML model has not been trained yet."
         )
 
-    package = joblib.load(MODEL_FILE)
-
-    return package["model"], package["features"]
-
-
-def predict_session(session: CustomerSession) -> dict:
-    """
-    Predict theft-risk for one customer session.
-    """
-
-    model, features = load_model()
-
-    feature_data = create_ml_features(session)
-
-    sample = pd.DataFrame([feature_data])
-
-    sample = sample[features]
-
-    prediction = model.predict(sample)[0]
-
-    probability = model.predict_proba(sample)[0][1]
-
-    if prediction == 1:
-        risk_level = "HIGH"
-    else:
-        risk_level = "LOW"
-
-    return {
-        "prediction": int(prediction),
-        "risk_level": risk_level,
-        "risk_probability": round(float(probability), 4),
-    }
-
-
-if __name__ == "__main__":
-
-    session = CustomerSession(
-        dwell_time=95,
-        item_interactions=7,
-        items_picked=4,
-        items_returned=0,
-        movement_speed=1.2,
-        shelf_visits=8,
-        exit_without_billing=1,
-        billing_mismatch=1,
+    package = joblib.load(
+        MODEL_FILE
     )
 
-    result = predict_session(session)
+    return package["model"]
 
-    print("===================================")
-    print("STORE VISION AI")
-    print("ML SESSION PREDICTION")
-    print("===================================")
 
-    print(f"Prediction       : {result['prediction']}")
-    print(f"Risk level       : {result['risk_level']}")
-    print(f"Risk probability : {result['risk_probability']}")
+def predict_risk(features):
+
+    model = load_model()
+
+    row = {
+        column: getattr(
+            features,
+            column
+        )
+        for column in FEATURE_COLUMNS
+    }
+
+    dataframe = pd.DataFrame(
+        [row],
+        columns=FEATURE_COLUMNS
+    )
+
+    probability = float(
+        model.predict_proba(
+            dataframe
+        )[0][1]
+    )
+
+    if probability >= 0.75:
+
+        level = "HIGH"
+
+    elif probability >= 0.40:
+
+        level = "MEDIUM"
+
+    else:
+
+        level = "LOW"
+
+    return {
+        "risk_probability": round(
+            probability,
+            4
+        ),
+        "risk_level": level,
+    }
