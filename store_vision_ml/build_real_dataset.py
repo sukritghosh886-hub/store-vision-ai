@@ -1,12 +1,10 @@
 """
 Build a real Store Vision AI ML dataset from Supabase visits.
-
-This reads actual visit IDs from the visits table and converts
-their existing item/billing events into ML features.
 """
 
 import os
 import sys
+
 import pandas as pd
 
 ROOT_DIR = os.path.dirname(
@@ -17,6 +15,7 @@ if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
 import store_events
+from backend.supabase_client import create_supabase_client
 from real_event_adapter import build_features
 
 
@@ -26,13 +25,18 @@ OUTPUT_FILE = os.path.join(
 )
 
 
+def get_supabase_client():
+    """Create the same Supabase client used by Store Vision AI."""
+
+    return create_supabase_client()
+
+
 def get_visit_ids():
-    """
-    Get visit IDs from the existing Supabase visits table.
-    """
+
+    client = get_supabase_client()
 
     response = (
-        store_events.supabase
+        client
         .table("visits")
         .select("id")
         .order("id")
@@ -102,18 +106,30 @@ def build_dataset():
         index=False
     )
 
-    print("\nDataset created successfully.")
+    print(
+        "\n===================================="
+    )
+    print(
+        "REAL EVENT DATASET CREATED"
+    )
+    print(
+        "===================================="
+    )
+
     print(
         f"Rows: {len(dataframe)}"
     )
+
     print(
         f"Columns: {len(dataframe.columns)}"
     )
+
     print(
-        f"Saved to: {OUTPUT_FILE}"
+        f"File: {OUTPUT_FILE}"
     )
 
     print("\nPreview:")
+
     print(
         dataframe.head()
     )
