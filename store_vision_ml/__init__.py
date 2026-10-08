@@ -2,10 +2,13 @@
 Store Vision AI — Machine Learning Package
 
 Provides:
-- Real event feature extraction
-- Reviewed-data training
+
+- Common feature schema
+- Synthetic model development
+- Real Store Vision event adaptation
 - Risk prediction
-- Runtime ML integration
+- Optional runtime integration
+- Reviewed-data training utilities
 """
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
