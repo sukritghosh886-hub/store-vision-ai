@@ -1,56 +1,36 @@
 """
 Store Vision AI — Real Event Adapter
 
-Converts actual Store Vision application events
-into ML features.
+Converts Store Vision application events
+into the common ML feature schema.
 
 Data source:
-Store Vision event system / Supabase
+Store Vision event system / Supabase.
+
+IMPORTANT:
+These features represent application-generated
+events. They are not proof of theft.
 """
 
-import os
-import sys
-
 from collections import Counter
-from dataclasses import asdict, dataclass
 
-
-ROOT_DIR = os.path.dirname(
-    os.path.dirname(
-        os.path.abspath(__file__)
-    )
+from .feature_adapter import (
+    StoreVisitFeatures,
 )
 
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
+from store_events import (
+    get_billing_events,
+    get_item_events,
+    get_unpaid_count,
+)
 
 
-import store_events
-
-
-@dataclass
-class RealVisitFeatures:
-    visit_id: int
-
-    item_event_count: int
-    shelf_item_count: int
-    billed_item_count: int
-    unpaid_item_count: int
-
-    unique_detected_items: int
-    unique_billed_items: int
-
-    billing_mismatch: int
-    billing_coverage_ratio: float
-    mean_detection_confidence: float
-
-
-def get_label(event):
+def get_label(event: dict) -> str:
     """
     Extract the product/item label from an event.
     """
 
-    return (
+    return str(
         event.get("item_label")
         or event.get("item_name")
         or event.get("label")
@@ -58,29 +38,33 @@ def get_label(event):
     )
 
 
-def build_features(visit_id):
+def build_features(
+    visit_id,
+) -> StoreVisitFeatures:
     """
     Build ML features for one Store Vision visit.
     """
 
-    visit_id = int(visit_id)
+    visit_id = int(
+        visit_id
+    )
 
     item_events = (
-        store_events.get_item_events(
+        get_item_events(
             visit_id
         )
         or []
     )
 
     billing_events = (
-        store_events.get_billing_events(
+        get_billing_events(
             visit_id
         )
         or []
     )
 
     unpaid_count = int(
-        store_events.get_unpaid_count(
+        get_unpaid_count(
             visit_id
         )
     )
@@ -100,11 +84,21 @@ def build_features(visit_id):
 
     for event in billing_events:
 
-        label = get_label(event)
-
-        quantity = int(
-            event.get("quantity") or 1
+        label = get_label(
+            event
         )
+
+        try:
+            quantity = int(
+                event.get("quantity")
+                or 1
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+            quantity = 1
 
         billed[label] += quantity
 
@@ -120,7 +114,7 @@ def build_features(visit_id):
 
         coverage = min(
             billed_total / detected_total,
-            1.0
+            1.0,
         )
 
     else:
@@ -135,18 +129,20 @@ def build_features(visit_id):
             "confidence"
         )
 
-        if confidence is not None:
+        if confidence is None:
+            continue
 
-            try:
-                confidence_values.append(
-                    float(confidence)
-                )
+        try:
 
-            except (
-                TypeError,
-                ValueError,
-            ):
-                pass
+            confidence_values.append(
+                float(confidence)
+            )
+
+        except (
+            TypeError,
+            ValueError,
+        ):
+            continue
 
     if confidence_values:
 
@@ -159,7 +155,7 @@ def build_features(visit_id):
 
         mean_confidence = 0.0
 
-    return RealVisitFeatures(
+    return StoreVisitFeatures(
 
         visit_id=visit_id,
 
@@ -187,23 +183,55 @@ def build_features(visit_id):
 
         billing_coverage_ratio=round(
             coverage,
-            4
+            4,
         ),
 
         mean_detection_confidence=round(
             mean_confidence,
-            4
+            4,
         ),
     )
 
 
-def features_as_dict(visit_id):
+def features_as_dict(
+    visit_id,
+) -> dict:
     """
     Return visit features as a dictionary.
     """
 
-    return asdict(
-        build_features(
-            visit_id
-        )
+    features = build_features(
+        visit_id
     )
+
+    return {
+        "visit_id":
+            features.visit_id,
+
+        "item_event_count":
+            features.item_event_count,
+
+        "shelf_item_count":
+            features.shelf_item_count,
+
+        "billed_item_count":
+            features.billed_item_count,
+
+        "unpaid_item_count":
+            features.unpaid_item_count,
+
+        "unique_detected_items":
+            features.unique_detected_items,
+
+        "unique_billed_items":
+            features.unique_billed_items,
+
+        "billing_mismatch":
+            features.billing_mismatch,
+
+        "billing_coverage_ratio":
+            features.billing_coverage_ratio,
+
+        "mean_detection_confidence":
+            features.mean_detection_confidence,
+    }
