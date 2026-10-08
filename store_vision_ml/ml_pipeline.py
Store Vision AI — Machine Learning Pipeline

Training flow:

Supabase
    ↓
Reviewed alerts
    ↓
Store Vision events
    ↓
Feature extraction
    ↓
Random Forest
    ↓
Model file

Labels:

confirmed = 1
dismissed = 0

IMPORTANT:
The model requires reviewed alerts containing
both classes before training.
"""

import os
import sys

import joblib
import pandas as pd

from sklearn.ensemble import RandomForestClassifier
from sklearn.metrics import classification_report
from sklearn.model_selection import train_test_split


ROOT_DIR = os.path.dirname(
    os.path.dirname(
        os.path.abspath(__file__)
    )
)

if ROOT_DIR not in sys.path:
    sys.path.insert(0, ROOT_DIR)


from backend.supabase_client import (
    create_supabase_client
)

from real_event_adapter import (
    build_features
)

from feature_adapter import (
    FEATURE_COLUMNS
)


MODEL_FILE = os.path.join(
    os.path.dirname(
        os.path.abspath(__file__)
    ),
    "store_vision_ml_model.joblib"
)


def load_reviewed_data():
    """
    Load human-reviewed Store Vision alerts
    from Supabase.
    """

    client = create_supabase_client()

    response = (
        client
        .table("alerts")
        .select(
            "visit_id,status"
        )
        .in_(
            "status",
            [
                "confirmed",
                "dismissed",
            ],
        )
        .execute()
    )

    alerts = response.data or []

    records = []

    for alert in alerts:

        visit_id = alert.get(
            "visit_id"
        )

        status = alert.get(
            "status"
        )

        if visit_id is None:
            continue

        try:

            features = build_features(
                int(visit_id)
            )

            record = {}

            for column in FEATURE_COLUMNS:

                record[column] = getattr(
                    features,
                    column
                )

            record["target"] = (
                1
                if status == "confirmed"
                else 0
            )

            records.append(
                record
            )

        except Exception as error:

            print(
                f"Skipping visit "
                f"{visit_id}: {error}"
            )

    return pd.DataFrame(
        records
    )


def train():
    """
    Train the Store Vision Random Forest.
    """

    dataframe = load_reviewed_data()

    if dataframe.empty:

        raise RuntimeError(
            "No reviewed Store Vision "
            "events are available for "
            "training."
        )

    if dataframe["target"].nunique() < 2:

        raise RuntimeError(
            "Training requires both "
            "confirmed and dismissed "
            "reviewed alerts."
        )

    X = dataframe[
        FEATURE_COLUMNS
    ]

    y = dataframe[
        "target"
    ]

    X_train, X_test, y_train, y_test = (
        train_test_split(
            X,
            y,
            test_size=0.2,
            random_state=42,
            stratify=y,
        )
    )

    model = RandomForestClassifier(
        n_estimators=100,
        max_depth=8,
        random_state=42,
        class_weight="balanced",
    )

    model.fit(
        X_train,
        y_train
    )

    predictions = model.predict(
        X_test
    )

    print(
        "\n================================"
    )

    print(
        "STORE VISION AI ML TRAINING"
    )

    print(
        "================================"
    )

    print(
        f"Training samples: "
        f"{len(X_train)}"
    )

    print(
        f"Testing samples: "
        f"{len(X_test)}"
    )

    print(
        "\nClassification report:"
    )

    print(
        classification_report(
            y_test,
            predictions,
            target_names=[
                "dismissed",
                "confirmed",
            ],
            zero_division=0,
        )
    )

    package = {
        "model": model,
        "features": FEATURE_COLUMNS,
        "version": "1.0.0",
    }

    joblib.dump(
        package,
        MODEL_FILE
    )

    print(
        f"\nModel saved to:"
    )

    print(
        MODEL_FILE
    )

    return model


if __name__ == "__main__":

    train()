@@ -1,267 +1,70 @@
 """
-Store Vision AI — Machine Learning Pipeline
+Store Vision AI — ML Pipeline
 
-Training flow:
+High-level utilities for:
 
-Supabase
-    ↓
-Reviewed alerts
-    ↓
-Store Vision events
-    ↓
-Feature extraction
-    ↓
-Random Forest
-    ↓
-Model file
-
-Labels:
-
-confirmed = 1
-dismissed = 0
+1. synthetic dataset generation
+2. model training
+3. runtime prediction
 
 IMPORTANT:
-The model requires reviewed alerts containing
-both classes before training.
+Synthetic training is for prototype development.
+Reviewed application outcomes should be used
+for future real-world model development.
 """
 
-import os
-import sys
+from pathlib import Path
 
-import joblib
-import pandas as pd
-
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import classification_report
-from sklearn.model_selection import train_test_split
-
-
-ROOT_DIR = os.path.dirname(
-    os.path.dirname(
-        os.path.abspath(__file__)
-    )
+from .generate_dataset import (
+    generate_dataset,
 )
 
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
-
-
-from backend.supabase_client import (
-    create_supabase_client
+from .predict import (
+    predict_risk,
 )
 
-from real_event_adapter import (
-    build_features
-)
-
-from feature_adapter import (
-    FEATURE_COLUMNS
+from .train_model import (
+    train_model,
 )
 
 
-MODEL_FILE = os.path.join(
-    os.path.dirname(
-        os.path.abspath(__file__)
-    ),
-    "store_vision_ml_model.joblib"
-)
+BASE_DIR = Path(__file__).resolve().parent
 
 
-def load_reviewed_data():
+def prepare_synthetic_model():
     """
-    Load human-reviewed Store Vision alerts
-    from Supabase.
+    Generate synthetic training data and train
+    the prototype Random Forest model.
     """
 
-    client = create_supabase_client()
+    generate_dataset()
 
-    response = (
-        client
-        .table("alerts")
-        .select(
-            "visit_id,status"
-        )
-        .in_(
-            "status",
-            [
-                "confirmed",
-                "dismissed",
-            ],
-        )
-        .execute()
-    )
+    train_model()
 
-    alerts = response.data or []
-
-    records = []
-
-    for alert in alerts:
-
-        visit_id = alert.get(
-            "visit_id"
-        )
-
-        status = alert.get(
-            "status"
-        )
-
-        if visit_id is None:
-            continue
-
-        try:
-
-            features = build_features(
-                int(visit_id)
-            )
-
-            record = {}
-
-            for column in FEATURE_COLUMNS:
-
-                record[column] = getattr(
-                    features,
-                    column
-                )
-
-            record["target"] = (
-                1
-                if status == "confirmed"
-                else 0
-            )
-
-            records.append(
-                record
-            )
-
-        except Exception as error:
-
-            print(
-                f"Skipping visit "
-                f"{visit_id}: {error}"
-            )
-
-    return pd.DataFrame(
-        records
-    )
-
-
-def train():
-    """
-    Train the Store Vision Random Forest.
-    """
-
-    dataframe = load_reviewed_data()
-
-    if dataframe.empty:
-
-        raise RuntimeError(
-            "No reviewed Store Vision "
-            "events are available for "
-            "training."
-        )
-
-    if dataframe["target"].nunique() < 2:
-
-        raise RuntimeError(
-            "Training requires both "
-            "confirmed and dismissed "
-            "reviewed alerts."
-        )
-
-    X = dataframe[
-        FEATURE_COLUMNS
-    ]
-
-    y = dataframe[
-        "target"
-    ]
-
-    X_train, X_test, y_train, y_test = (
-        train_test_split(
-            X,
-            y,
-            test_size=0.2,
-            random_state=42,
-            stratify=y,
-        )
-    )
-
-    model = RandomForestClassifier(
-        n_estimators=100,
-        max_depth=8,
-        random_state=42,
-        class_weight="balanced",
-    )
-
-    model.fit(
-        X_train,
-        y_train
-    )
-
-    predictions = model.predict(
-        X_test
-    )
-
-    print(
-        "\n================================"
-    )
-
-    print(
-        "STORE VISION AI ML TRAINING"
-    )
-
-    print(
-        "================================"
-    )
-
-    print(
-        f"Training samples: "
-        f"{len(X_train)}"
-    )
-
-    print(
-        f"Testing samples: "
-        f"{len(X_test)}"
-    )
-
-    print(
-        "\nClassification report:"
-    )
-
-    print(
-        classification_report(
-            y_test,
-            predictions,
-            target_names=[
-                "dismissed",
-                "confirmed",
-            ],
-            zero_division=0,
-        )
-    )
-
-    package = {
-        "model": model,
-        "features": FEATURE_COLUMNS,
-        "version": "1.0.0",
+    return {
+        "status": "success",
+        "training_data": "synthetic",
+        "model_file": str(
+            BASE_DIR
+            / "store_vision_ml_model.joblib"
+        ),
     }
 
-    joblib.dump(
-        package,
-        MODEL_FILE
-    )
 
-    print(
-        f"\nModel saved to:"
-    )
+def predict_visit(features):
+    """
+    Run the runtime predictor on a feature object.
+    """
 
-    print(
-        MODEL_FILE
+    return predict_risk(
+        features
     )
-
-    return model
 
 
 if __name__ == "__main__":
 
-    train()
+    result = prepare_synthetic_model()
+
+    print(
+        result
+    )
