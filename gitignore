@@ -9,9 +9,14 @@ __pycache__/
 
 *.pt
 *.onnx
+*.joblib
+
+*.csv
+
 *.mp4
 *.avi
 *.mov
+*.mkv
 
 .DS_Store
 
@@ -21,3 +26,10 @@ env/
 
 .pytest_cache/
 .mypy_cache/
+
+.ipynb_checkpoints/
+
+runs/
+outputs/
+datasets/
+data/
