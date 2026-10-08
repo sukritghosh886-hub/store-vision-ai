@@ -1,33 +1,37 @@
 """
-Build a real Store Vision AI ML dataset from Supabase visits.
+Store Vision AI — Real Event Dataset Builder
+
+Builds a feature dataset from Store Vision
+application events stored in Supabase.
+
+IMPORTANT:
+This creates features, not ground-truth theft labels.
+
+Human-reviewed outcomes are required before
+using this data as supervised training labels.
 """
 
-import os
-import sys
+from pathlib import Path
 
 import pandas as pd
 
-ROOT_DIR = os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))
+from backend.supabase_client import (
+    create_supabase_client,
 )
 
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
-
-import store_events
-from backend.supabase_client import create_supabase_client
-from real_event_adapter import build_features
+from .real_event_adapter import (
+    build_features,
+)
 
 
-OUTPUT_FILE = os.path.join(
-    os.path.dirname(__file__),
-    "real_event_dataset.csv"
+BASE_DIR = Path(__file__).resolve().parent
+
+OUTPUT_FILE = (
+    BASE_DIR / "real_event_dataset.csv"
 )
 
 
 def get_supabase_client():
-    """Create the same Supabase client used by Store Vision AI."""
-
     return create_supabase_client()
 
 
@@ -71,11 +75,37 @@ def build_dataset():
             )
 
             records.append(
-                features.__dict__
-            )
+                {
+                    "visit_id":
+                        features.visit_id,
 
-            print(
-                f"Processed visit {visit_id}"
+                    "item_event_count":
+                        features.item_event_count,
+
+                    "shelf_item_count":
+                        features.shelf_item_count,
+
+                    "billed_item_count":
+                        features.billed_item_count,
+
+                    "unpaid_item_count":
+                        features.unpaid_item_count,
+
+                    "unique_detected_items":
+                        features.unique_detected_items,
+
+                    "unique_billed_items":
+                        features.unique_billed_items,
+
+                    "billing_mismatch":
+                        features.billing_mismatch,
+
+                    "billing_coverage_ratio":
+                        features.billing_coverage_ratio,
+
+                    "mean_detection_confidence":
+                        features.mean_detection_confidence,
+                }
             )
 
         except Exception as error:
@@ -87,15 +117,10 @@ def build_dataset():
     if not records:
 
         print(
-            "\nNo usable visit events were found."
+            "No usable visit events were found."
         )
 
-        print(
-            "Run Store Vision AI and generate "
-            "some visits/events first."
-        )
-
-        return
+        return None
 
     dataframe = pd.DataFrame(
         records
@@ -103,15 +128,17 @@ def build_dataset():
 
     dataframe.to_csv(
         OUTPUT_FILE,
-        index=False
+        index=False,
     )
 
     print(
-        "\n===================================="
+        "===================================="
     )
+
     print(
         "REAL EVENT DATASET CREATED"
     )
+
     print(
         "===================================="
     )
@@ -128,11 +155,7 @@ def build_dataset():
         f"File: {OUTPUT_FILE}"
     )
 
-    print("\nPreview:")
-
-    print(
-        dataframe.head()
-    )
+    return dataframe
 
 
 if __name__ == "__main__":
