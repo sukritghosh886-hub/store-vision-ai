@@ -1,4 +1,16 @@
+fastapi
+uvicorn[standard]
+python-multipart
+
+numpy
 pandas
 scikit-learn
 joblib
+
 supabase
+python-dotenv
+
+opencv-python-headless
+torch
+torchvision
+ultralytics
