@@ -1,8 +1,8 @@
 """
 Store Vision AI — ML Runtime Integration
 
-Connects real Store Vision events to the
-machine-learning prediction layer.
+Connects the Store Vision application to the
+trained machine-learning model.
 
 Flow:
 
@@ -10,9 +10,11 @@ Store Vision events
         ↓
 Feature extraction
         ↓
-Trained Random Forest
+Random Forest
         ↓
-Risk score
+Risk probability
+        ↓
+Risk level
         ↓
 Human review
 """
@@ -20,24 +22,37 @@ Human review
 import os
 import sys
 
+
 ROOT_DIR = os.path.dirname(
-    os.path.dirname(os.path.abspath(__file__))
+    os.path.dirname(
+        os.path.abspath(__file__)
+    )
 )
 
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 
-from real_event_adapter import build_features
-from predict import predict_risk
+
+from real_event_adapter import (
+    build_features
+)
+
+from predict import (
+    predict_risk
+)
 
 
 def analyze_visit(visit_id):
     """
-    Analyze one real Store Vision visit.
+    Analyze one Store Vision visit.
     """
 
+    visit_id = int(
+        visit_id
+    )
+
     features = build_features(
-        int(visit_id)
+        visit_id
     )
 
     prediction = predict_risk(
@@ -45,15 +60,21 @@ def analyze_visit(visit_id):
     )
 
     return {
-        "visit_id": int(visit_id),
+
+        "visit_id": visit_id,
 
         "risk_probability":
-            prediction["risk_probability"],
+            prediction[
+                "risk_probability"
+            ],
 
         "risk_level":
-            prediction["risk_level"],
+            prediction[
+                "risk_level"
+            ],
 
         "features": {
+
             "item_event_count":
                 features.item_event_count,
 
@@ -80,19 +101,21 @@ def analyze_visit(visit_id):
 
             "mean_detection_confidence":
                 features.mean_detection_confidence,
-        }
+        },
     }
 
 
 def should_review(result):
     """
-    Determine whether the visit should be
-    sent for human review.
+    Determine whether human review is required.
     """
 
     return (
         result["risk_level"]
-        in ["MEDIUM", "HIGH"]
+        in [
+            "MEDIUM",
+            "HIGH",
+        ]
     )
 
 
@@ -102,14 +125,15 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser(
         description=(
-            "Analyze a Store Vision AI visit "
-            "using the ML pipeline."
+            "Analyze a Store Vision AI "
+            "visit using the ML pipeline."
         )
     )
 
     parser.add_argument(
         "visit_id",
-        type=int
+        type=int,
+        help="Store Vision visit ID",
     )
 
     args = parser.parse_args()
