@@ -1,8 +1,12 @@
 """
 Store Vision AI — Feature Adapter
 
-Defines the common feature schema used by
-training and prediction.
+Defines the single feature schema shared by:
+
+- real event extraction
+- dataset generation
+- model training
+- runtime prediction
 """
 
 from dataclasses import asdict, dataclass
@@ -38,18 +42,16 @@ FEATURE_COLUMNS = [
 ]
 
 
-def features_to_dict(features):
-    """
-    Convert StoreVisitFeatures into a dictionary.
-    """
+def features_to_dict(features: StoreVisitFeatures) -> dict:
+    """Convert StoreVisitFeatures to a dictionary."""
 
     return asdict(features)
 
 
-def model_features(features):
+def model_features(features: StoreVisitFeatures) -> list[list]:
     """
-    Convert features into the 2D format expected
-    by scikit-learn.
+    Convert one feature object into the 2D format
+    expected by scikit-learn.
     """
 
     data = features_to_dict(features)
