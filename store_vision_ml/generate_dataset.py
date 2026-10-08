@@ -1,13 +1,15 @@
 """
-Store Vision AI
-Machine Learning Pipeline
-
-Synthetic training-data generator for theft-risk classification.
+Store Vision AI — Synthetic ML Dataset Generator
 
 IMPORTANT:
-This dataset is synthetic and is intended only for
-prototype/model-development purposes.
+This dataset is synthetic.
+
+It is useful for software integration and prototype
+development only. It does not prove real-world theft
+detection performance.
 """
+
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -15,83 +17,163 @@ import pandas as pd
 
 RANDOM_SEED = 42
 SAMPLES = 2000
-OUTPUT_FILE = "training_data.csv"
+
+BASE_DIR = Path(__file__).resolve().parent
+OUTPUT_FILE = BASE_DIR / "training_data.csv"
 
 
-np.random.seed(RANDOM_SEED)
+def generate_dataset() -> pd.DataFrame:
+    rng = np.random.default_rng(RANDOM_SEED)
 
-
-def generate_dataset():
-    data = []
+    records = []
 
     for _ in range(SAMPLES):
 
-        dwell_time = np.random.uniform(1, 120)
+        item_event_count = int(
+            rng.integers(0, 20)
+        )
 
-        item_interactions = np.random.randint(0, 10)
+        shelf_item_count = int(
+            rng.integers(0, 12)
+        )
 
-        items_picked = np.random.randint(0, 6)
+        billed_item_count = int(
+            rng.integers(0, 12)
+        )
 
-        items_returned = np.random.randint(0, 6)
+        unpaid_item_count = max(
+            shelf_item_count - billed_item_count,
+            0,
+        )
 
-        movement_speed = np.random.uniform(0.1, 3.0)
+        unique_detected_items = int(
+            rng.integers(
+                0,
+                max(shelf_item_count, 1) + 1,
+            )
+        )
 
-        shelf_visits = np.random.randint(0, 12)
+        unique_billed_items = int(
+            rng.integers(
+                0,
+                max(billed_item_count, 1) + 1,
+            )
+        )
 
-        exit_without_billing = np.random.randint(0, 2)
+        billing_mismatch = int(
+            unpaid_item_count > 0
+        )
 
-        billing_mismatch = np.random.randint(0, 2)
+        if shelf_item_count > 0:
+            billing_coverage_ratio = min(
+                billed_item_count / shelf_item_count,
+                1.0,
+            )
+        else:
+            billing_coverage_ratio = 1.0
+
+        mean_detection_confidence = float(
+            rng.uniform(0.55, 0.99)
+        )
 
         risk_score = (
-            exit_without_billing * 5
-            + billing_mismatch * 4
-            + max(items_picked - items_returned, 0) * 0.8
-            + shelf_visits * 0.15
-            + item_interactions * 0.1
-            + (1 if dwell_time > 90 else 0) * 0.5
+            unpaid_item_count * 4.0
+            + billing_mismatch * 2.0
+            + max(
+                unique_detected_items
+                - unique_billed_items,
+                0,
+            ) * 0.8
+            + max(
+                0.75 - billing_coverage_ratio,
+                0,
+            ) * 4.0
+            + item_event_count * 0.05
+            + (
+                0.5
+                if mean_detection_confidence < 0.70
+                else 0
+            )
         )
 
-        theft_risk = 1 if risk_score >= 5 else 0
-
-        data.append(
-            [
-                dwell_time,
-                item_interactions,
-                items_picked,
-                items_returned,
-                movement_speed,
-                shelf_visits,
-                exit_without_billing,
-                billing_mismatch,
-                theft_risk,
-            ]
+        theft_risk = int(
+            risk_score >= 4.0
         )
 
-    columns = [
-        "dwell_time",
-        "item_interactions",
-        "items_picked",
-        "items_returned",
-        "movement_speed",
-        "shelf_visits",
-        "exit_without_billing",
-        "billing_mismatch",
-        "theft_risk",
-    ]
+        records.append(
+            {
+                "item_event_count":
+                    item_event_count,
 
-    dataframe = pd.DataFrame(data, columns=columns)
+                "shelf_item_count":
+                    shelf_item_count,
 
-    dataframe.to_csv(OUTPUT_FILE, index=False)
+                "billed_item_count":
+                    billed_item_count,
+
+                "unpaid_item_count":
+                    unpaid_item_count,
+
+                "unique_detected_items":
+                    unique_detected_items,
+
+                "unique_billed_items":
+                    unique_billed_items,
+
+                "billing_mismatch":
+                    billing_mismatch,
+
+                "billing_coverage_ratio":
+                    round(
+                        billing_coverage_ratio,
+                        4,
+                    ),
+
+                "mean_detection_confidence":
+                    round(
+                        mean_detection_confidence,
+                        4,
+                    ),
+
+                "theft_risk":
+                    theft_risk,
+            }
+        )
+
+    dataframe = pd.DataFrame(records)
+
+    dataframe.to_csv(
+        OUTPUT_FILE,
+        index=False,
+    )
+
+    return dataframe
+
+
+def main():
+    dataframe = generate_dataset()
 
     print("===================================")
     print("STORE VISION AI")
     print("ML DATASET GENERATOR")
     print("===================================")
-    print(f"Samples generated: {len(dataframe)}")
-    print(f"Output file: {OUTPUT_FILE}")
+
+    print(
+        f"Samples generated: {len(dataframe)}"
+    )
+
+    print(
+        f"Output file: {OUTPUT_FILE}"
+    )
+
     print("\nClass distribution:")
-    print(dataframe["theft_risk"].value_counts())
+
+    print(
+        dataframe["theft_risk"]
+        .value_counts()
+        .sort_index()
+    )
 
 
 if __name__ == "__main__":
-    generate_dataset()
+    main()
