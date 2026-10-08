@@ -177,15 +177,30 @@ def get_unpaid_count(visit_id: str) -> int:
     detected = {}
 
     for item in items:
-        label = item.get("item_label", "unknown")
-        detected[label] = detected.get(label, 0) + 1
+        label = item.get(
+            "item_label",
+            "unknown",
+        )
+
+        detected[label] = (
+            detected.get(label, 0) + 1
+        )
 
     billed = {}
 
     for bill in bills:
-        label = bill.get("item_label", "unknown")
-        quantity = int(bill.get("quantity", 1))
-        billed[label] = billed.get(label, 0) + quantity
+        label = bill.get(
+            "item_label",
+            "unknown",
+        )
+
+        quantity = int(
+            bill.get("quantity", 1)
+        )
+
+        billed[label] = (
+            billed.get(label, 0) + quantity
+        )
 
     unpaid = 0
 
@@ -198,13 +213,63 @@ def get_unpaid_count(visit_id: str) -> int:
     return unpaid
 
 
+def _add_ml_analysis(
+    alert,
+    visit_id,
+):
+    """
+    Run the Store Vision ML pipeline for a
+    completed visit.
+
+    ML is optional. The existing rule-based
+    Store Vision alert continues to work even
+    when the model is unavailable.
+    """
+
+    if not alert:
+        return alert
+
+    try:
+
+        from store_vision_ml.runtime_integration import (
+            analyze_visit
+        )
+
+        result = analyze_visit(
+            visit_id
+        )
+
+        alert["ml_analysis"] = result
+
+    except (
+        FileNotFoundError,
+        ImportError,
+        ModuleNotFoundError,
+    ):
+
+        # Model/dependencies are not available yet.
+        pass
+
+    except Exception as error:
+
+        # ML must never break the core
+        # Store Vision workflow.
+        alert["ml_analysis_error"] = str(
+            error
+        )
+
+    return alert
+
+
 def close_visit(
     visit_id: str,
     store_id: str,
 ):
     client = _client()
 
-    unpaid = get_unpaid_count(visit_id)
+    unpaid = get_unpaid_count(
+        visit_id
+    )
 
     status = (
         "exited_flagged"
@@ -243,10 +308,15 @@ def close_visit(
         .execute()
     )
 
-    return (
+    alert_record = (
         alert.data[0]
         if alert.data
         else None
+    )
+
+    return _add_ml_analysis(
+        alert_record,
+        visit_id,
     )
 
 
@@ -260,7 +330,10 @@ def get_open_alerts(
         .table("alerts")
         .select("*")
         .eq("status", "open")
-        .order("created_at", desc=True)
+        .order(
+            "created_at",
+            desc=True,
+        )
     )
 
     if store_id:
@@ -346,7 +419,10 @@ def get_visit_history(
         client
         .table("visits")
         .select("*")
-        .eq("store_id", store_id)
+        .eq(
+            "store_id",
+            store_id,
+        )
         .order(
             "entered_at",
             desc=True,
